@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>RUNNING</title>
+<style>body { font-family: monospace; font-size: 12px; white-space: pre-wrap; }</style>
+</head>
+<body>
+<!--
+  Phase 2 spikes. These gate the Pyodide design, so they run before any of it
+  is built:
+
+    S1  JSPI is available and pyodide.ffi.run_sync blocks a *synchronous*
+        Python function on a JS promise, on the main thread.
+    S2  frame.f_lineno can be assigned from a trace function on CPython 3.14,
+        with the same legality rules measured on 3.10 - this is what goto/label
+        is built on.
+    S3  sys.monitoring JUMP events fire on loop back-edges (the killableWhile
+        analogue), and whether f_lineno can be set from a monitoring callback.
+    S5  print(end="") reaches the stdout write handler immediately, rather than
+        sitting in CPython's 8 KB block buffer.
+
+    chrome --headless --disable-gpu --virtual-time-budget=600000 --dump-dom \
+      http://localhost:8731/tests/spike-pyodide.html > spike.html
+-->
+<pre id="status">loading pyodide…</pre>
+<pre id="out"></pre>
+
+<script src="../js/pyodide/pyodide.js"></script>
+<script>
+var results = [];
+function record(id, name, ok, detail) {
+  results.push({ id: id, name: name, ok: !!ok, detail: String(detail === undefined ? "" : detail) });
+}
+
+var stdoutChunks = [];
+var decoder = new TextDecoder("utf-8");
+
+(async function () {
+  var st = document.getElementById("status");
+  var t0 = Date.now();
+  var pyodide;
+  try {
+    pyodide = await loadPyodide({ indexURL: "../js/pyodide/" });
+  } catch (e) {
+    document.getElementById("out").textContent = "loadPyodide FAILED: " + e;
+    document.title = "DONE";
+    return;
+  }
+  var loadMs = Date.now() - t0;
+  st.textContent = "pyodide up in " + loadMs + "ms";
+
+  record("env", "pyodide loaded", true,
+         loadMs + "ms (cold-ish: the dev server sends Cache-Control: no-store, " +
+         "but the browser may still reuse a compiled-wasm cache)");
+  record("env", "python version",
+         true, pyodide.runPython("import sys; sys.version.split()[0]"));
+
+  // ---- S5: stdout must not block-buffer -------------------------------
+  pyodide.setStdout({ write: function (buf) {
+    stdoutChunks.push(decoder.decode(buf, { stream: true }));
+    return buf.length;
+  }});
+  pyodide.runPython('print("A", end="")');
+  var sawPartial = stdoutChunks.join("") === "A";
+  // Expected to be buffered: with isatty false, CPython block-buffers stdout at
+  // 8 KB, so slowPrint's character-at-a-time output would arrive in bursts.
+  record("S5", "print(end='') is block-buffered by default (so we must unbuffer)",
+         !sawPartial, JSON.stringify(stdoutChunks.join("")));
+  if (!sawPartial) {
+    // the documented fix
+    pyodide.runPython(
+      "import sys, io\n" +
+      "sys.stdout = io.TextIOWrapper(open(1,'wb',buffering=0), encoding='utf-8'," +
+      " errors='replace', write_through=True)\n"
+    );
+    stdoutChunks.length = 0;
+    pyodide.runPython('print("B", end="")');
+    record("S5", "…after forcing an unbuffered TextIOWrapper",
+           stdoutChunks.join("") === "B", JSON.stringify(stdoutChunks.join("")));
+  }
+
+  // ---- S1: JSPI ---------------------------------------------------------
+  var canRunSync = false;
+  try {
+    canRunSync = pyodide.runPython("from pyodide.ffi import can_run_sync; can_run_sync()");
+  } catch (e) {
+    record("S1", "pyodide.ffi.can_run_sync importable", false, e.message || e);
+  }
+  record("S1", "can_run_sync() is false at top level (so it is NOT the probe)",
+         canRunSync === false, String(canRunSync));
+  record("S1", "WebAssembly.Suspending exists", "Suspending" in WebAssembly, "");
+
+  // can_run_sync() answers "can I block *right now*", not "is JSPI supported",
+  // so it is false at top level and true inside a promising call. That makes it
+  // useless as a boot-time capability probe - hence this check, to establish
+  // what the probe should actually be.
+  pyodide.runPython(
+    "from pyodide.ffi import can_run_sync as _crs\n" +
+    "def probe_inside():\n" +
+    "    return bool(_crs())\n"
+  );
+  var probe = pyodide.globals.get("probe_inside");
+  try {
+    var inside = await probe.callPromising();
+    record("S1", "can_run_sync() inside a promising call", inside === true, String(inside));
+  } catch (e) {
+    record("S1", "can_run_sync() inside a promising call", false, e.message || e);
+  }
+  probe.destroy();
+
+  // A *synchronous* Python function that blocks on a JS promise. This is the
+  // shape every blocking builtin will use: input(), sleep(), the csinsc XHRs.
+  window.__spikeSleep = function (ms) {
+    return new Promise(function (r) { setTimeout(function () { r("slept" + ms); }, ms); });
+  };
+  pyodide.runPython(
+    "import js\n" +
+    "from pyodide.ffi import run_sync\n" +
+    "def blocking_call():\n" +
+    "    a = run_sync(js.__spikeSleep(5))\n" +
+    "    b = run_sync(js.__spikeSleep(5))\n" +
+    "    return a + '/' + b\n"
+  );
+  var fn = pyodide.globals.get("blocking_call");
+  var promising = typeof fn.callPromising === "function" ? "callPromising"
+                : typeof fn.callSyncifying === "function" ? "callSyncifying" : null;
+  record("S1", "PyProxy has a promising call method", !!promising, promising || "neither");
+  if (promising) {
+    try {
+      var r = await fn[promising]();
+      record("S1", "run_sync blocked a sync Python fn twice on the main thread",
+             r === "slept5/slept5", r);
+    } catch (e) {
+      record("S1", "run_sync via " + promising, false, e.message || e);
+    }
+  }
+  fn.destroy();
+
+  // ---- S2: frame.f_lineno jumps ----------------------------------------
+  // Same seven shapes measured on 3.10.6 while planning.
+  pyodide.runPython([
+    "import sys",
+    "def try_jump(src, fname, trigger, target, key):",
+    "    g = {}; fired = []; err = []",
+    "    def tr(frame, event, arg):",
+    "        if frame.f_code.co_filename != fname: return None",
+    "        if event == 'line' and frame.f_lineno == trigger and not fired:",
+    "            fired.append(1)",
+    "            try: frame.f_lineno = target",
+    "            except Exception as e: err.append(type(e).__name__ + ': ' + str(e))",
+    "        return tr",
+    "    sys.settrace(tr)",
+    "    try: exec(compile(src, fname, 'exec'), g)",
+    "    except Exception as e: err.append('RUNTIME ' + type(e).__name__ + ': ' + str(e))",
+    "    sys.settrace(None)",
+    "    return {'err': err[0] if err else None, 'fired': bool(fired), 'value': repr(g.get(key))}",
+    ""
+  ].join("\n"));
+
+  var jumpCases = [
+    ["into an if-body from an outer line",
+     ["out = []", "cond = False", "out.append('a')", "if cond:", "    out.append(7)", "out.append(9)"],
+     "<a>", 3, 5, "out", "[7, 9]"],
+    ["into a NESTED if-body, 2 deep (escape.py shape)",
+     ["out = []", "a = False", "b = False", "out.append('a')", "if a:",
+      "    out.append('x')", "    if b:", "        out.append(7)", "out.append(9)"],
+     "<b>", 4, 8, "out", "[7, 9]"],
+    ["into an else-body (fashion.py shape)",
+     ["out = []", "cond = True", "out.append('a')", "if cond:", "    out.append(1)",
+      "else:", "    out.append(2)", "out.append(9)"],
+     "<c>", 3, 7, "out", "[2, 9]"],
+    ["into an elif-body",
+     ["out = []", "a = False", "out.append('a')", "if a:", "    out.append(1)",
+      "elif a:", "    out.append(2)", "out.append(9)"],
+     "<d>", 3, 7, "out", "[2, 9]"],
+    ["backward out of an if-body (menu re-loop)",
+     ["out = []", "n = 0", "out.append('start')", "n = n + 1", "cond = n < 2",
+      "if cond:", "    out.append('again')", "out.append('end')"],
+     "<e>", 7, 4, "out", "['start', 'end']"]
+  ];
+  var tryJump = pyodide.globals.get("try_jump");
+  jumpCases.forEach(function (c) {
+    var res = tryJump(c[1].join("\n"), c[2], c[3], c[4], c[5]).toJs({ dict_converter: Object.fromEntries });
+    record("S2", "jump " + c[0], !res.err && res.value === c[6],
+           res.err ? res.err : res.value);
+  });
+
+  // The two that must be refused, so the error a student sees is a clear one.
+  [["into a for-body", ["out = []", "for i in [1,2]:", "    out.append(i)", "out.append(0)"], "<f>", 1, 3, "out"],
+   ["into a with-body", ["import contextlib", "out = []",
+     "with contextlib.suppress(Exception):", "    out.append(1)", "out.append(9)"], "<g>", 2, 4, "out"]
+  ].forEach(function (c) {
+    var res = tryJump(c[1].join("\n"), c[2], c[3], c[4], c[5]).toJs({ dict_converter: Object.fromEntries });
+    record("S2", "jump " + c[0] + " is refused", !!res.err && res.err.indexOf("ValueError") === 0, res.err);
+  });
+  tryJump.destroy();
+
+  // ---- S3: sys.monitoring ----------------------------------------------
+  var mon = pyodide.runPython([
+    "import sys",
+    "res = {}",
+    "try:",
+    "    TOOL = sys.monitoring.DEBUGGER_ID",
+    "    E = sys.monitoring.events",
+    "    sys.monitoring.use_tool_id(TOOL, 'spike')",
+    "    hits = []",
+    "    def on_jump(code, off, dest):",
+    "        if dest > off: return sys.monitoring.DISABLE",
+    "        hits.append(1)",
+    "    sys.monitoring.register_callback(TOOL, E.JUMP, on_jump)",
+    "    src = 'n=0\\nwhile n < 5:\\n    n += 1\\n'",
+    "    co = compile(src, '<loop>', 'exec')",
+    "    sys.monitoring.set_local_events(TOOL, co, E.JUMP)",
+    "    exec(co, {})",
+    "    sys.monitoring.set_local_events(TOOL, co, 0)",
+    "    sys.monitoring.free_tool_id(TOOL)",
+    "    res['backedges'] = len(hits)",
+    "    res['error'] = None",
+    "except Exception as e:",
+    "    res['backedges'] = -1",
+    "    res['error'] = type(e).__name__ + ': ' + str(e)",
+    "res"
+  ].join("\n")).toJs({ dict_converter: Object.fromEntries });
+  record("S3", "sys.monitoring JUMP fires on loop back-edges",
+         mon.backedges > 0, mon.error ? mon.error : mon.backedges + " back-edges in a 5-iteration while");
+
+  // ---- S6: can a loop back-edge callback block? -------------------------
+  // The whole "stop a runaway loop" and "let a game loop breathe" design rests
+  // on calling run_sync from inside a sys.monitoring JUMP callback. Nothing
+  // else in the plan establishes that it is allowed.
+  window.__spikeTick = function () {
+    return new Promise(function (r) { setTimeout(function () { r(1); }, 1); });
+  };
+  pyodide.runPython([
+    "import sys, js",
+    "from pyodide.ffi import run_sync",
+    "TOOL = sys.monitoring.DEBUGGER_ID",
+    "E = sys.monitoring.events",
+    "def yielding_loop():",
+    "    sys.monitoring.use_tool_id(TOOL, 'spike6')",
+    "    hits = []",
+    "    def on_jump(code, off, dest):",
+    "        if dest > off: return sys.monitoring.DISABLE",
+    "        run_sync(js.__spikeTick())      # the load-bearing question",
+    "        hits.append(1)",
+    "    src = 'n=0\\nwhile n < 4:\\n    n += 1\\n'",
+    "    co = compile(src, '<loop6>', 'exec')",
+    "    sys.monitoring.register_callback(TOOL, E.JUMP, on_jump)",
+    "    sys.monitoring.set_local_events(TOOL, co, E.JUMP)",
+    "    try:",
+    "        exec(co, {})",
+    "    finally:",
+    "        sys.monitoring.set_local_events(TOOL, co, 0)",
+    "        sys.monitoring.register_callback(TOOL, E.JUMP, None)",
+    "        sys.monitoring.free_tool_id(TOOL)",
+    "    return len(hits)"
+  ].join("\n"));
+  var loopFn = pyodide.globals.get("yielding_loop");
+  try {
+    var hits = await loopFn.callPromising();
+    record("S6", "run_sync works inside a sys.monitoring JUMP callback",
+           hits > 0, hits + " back-edges yielded");
+  } catch (e) {
+    record("S6", "run_sync works inside a sys.monitoring JUMP callback",
+           false, String(e.message || e).split("\n").slice(-3).join(" | "));
+  }
+  loopFn.destroy();
+
+  // ---- report -----------------------------------------------------------
+  var failed = results.filter(function (r) { return !r.ok; });
+  document.getElementById("out").textContent =
+    results.map(function (r) {
+      return (r.ok ? "PASS  " : "FAIL  ") + "[" + r.id + "] " + r.name +
+             (r.detail ? "\n         " + r.detail : "");
+    }).join("\n") + "\n\n" + failed.length + " failed of " + results.length;
+  st.textContent = "done";
+  document.title = "DONE";
+})();
+</script>
+</body>
+</html>

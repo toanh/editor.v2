@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>RUNNING</title>
+<style>
+  #frames { position: absolute; left: -10000px; top: 0; width: 900px; height: 600px; }
+  #frames iframe { width: 900px; height: 600px; border: 0; }
+  body { font-family: monospace; }
+</style>
+</head>
+<body>
+<!--
+  Dumps what the classroom builtins actually look like once bound, so two
+  versions of the app can be compared name by name.
+
+  Most of these 56 names have zero coverage in the curriculum corpus - Hue,
+  the webcam, iframes, the inputnumber aliases - so the conformance harness
+  says nothing about them. This does: it records the binding itself (kind,
+  value, argument metadata) rather than any program output.
+
+    chrome --headless --disable-gpu --virtual-time-budget=120000 --dump-dom \
+      http://localhost:8000/tests/hostnames.html > names.html
+-->
+<pre id="status">running…</pre>
+<pre id="out"></pre>
+<div id="frames"></div>
+
+<script>
+// Hard-coded so both the old and new builds are probed identically. Sourced
+// from the registrations that were in console.js before the Host registry.
+var NAMES = [
+  // constants
+  "RESET","RED","BLACK","WHITE","GREEN","BLUE","CYAN","YELLOW","MAGENTA",
+  "ORANGE","PURPLE","HL_BLACK","HL_WHITE","HL_RED","HL_GREEN","HL_BLUE",
+  "HL_CYAN","HL_YELLOW","HL_MAGENTA","HL_ORANGE","HL_PURPLE","BOLD","ITALICS",
+  "UNDERLINE",
+  // sk_method-wrapped
+  "showGoogleVideo","showIFrame","getURLParam","setCanvasSize",
+  "setConsoleFontSize","inputnumber","setHueBridgeIP","setLight",
+  // raw functions
+  "saveWebCamImage","getWebCamImage","setWebCamCallback","clear","showSpinner",
+  "hideSpinner","print_screen","showTurtle","executeHueCommands",
+  "queueHueCommand","huelight","huebright","huecolour","getlight","getButton",
+  "waitForSmartButtonClick",
+  // aliases
+  "input_number","inputNumber","inputnum","input_num","inputNum",
+  "runHueCommands","setHueCommand",
+  // set by editor.js, not console.js - included as a control
+  "webServiceURL"
+];
+
+function describe(v) {
+  if (v === undefined) return { present: false };
+  var d = { present: true, ctor: (v.constructor && v.constructor.name) || typeof v };
+  if (typeof v === "function") {
+    d.kind = "function";
+    d.fnName = v.name;
+    d.arity = v.length;
+    return d;
+  }
+  if (typeof v.v === "string") { d.kind = "str"; d.value = v.v; return d; }
+  // sk_method / other Skulpt object: record the argument metadata if exposed
+  d.kind = "object";
+  ["$name", "$textsig", "$doc"].forEach(function (k) {
+    if (v[k] !== undefined) d[k] = v[k];
+    if (v.d$def && v.d$def[k] !== undefined) d[k] = v.d$def[k];
+  });
+  var flags = v.$flags || (v.d$def && v.d$def.$flags);
+  if (flags) d.flags = { NamedArgs: flags.NamedArgs, Defaults: flags.Defaults };
+  return d;
+}
+
+(function () {
+  var frame = document.createElement("iframe");
+  frame.src = "../editor.html?norun=1&nosave=1&nosnap=1&nofs=1&name=__names__";
+  document.getElementById("frames").appendChild(frame);
+
+  var started = Date.now();
+  frame.onload = function () {
+    (function poll() {
+      var w = frame.contentWindow, ready = false;
+      try { ready = w && w.Sk && w.Sk.builtins && typeof w.runSkulpt === "function"; }
+      catch (e) {}
+      if (!ready) {
+        if (Date.now() - started > 20000) {
+          document.getElementById("out").textContent =
+            JSON.stringify({ error: "editor never became ready" });
+          document.title = "DONE";
+          return;
+        }
+        return setTimeout(poll, 60);
+      }
+      var report = {};
+      NAMES.forEach(function (n) {
+        try { report[n] = describe(w.Sk.builtins[n]); }
+        catch (e) { report[n] = { present: false, error: String(e) }; }
+      });
+      var missing = NAMES.filter(function (n) { return !report[n].present; });
+      document.getElementById("status").textContent =
+        NAMES.length + " probed, " + missing.length + " missing";
+      document.getElementById("out").textContent =
+        JSON.stringify({ probed: NAMES.length, missing: missing, names: report }, null, 1);
+      document.title = "DONE";
+    })();
+  };
+})();
+</script>
+</body>
+</html>

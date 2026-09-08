@@ -1,10 +1,28 @@
+// Skulpt's grammar has real `label NAME` / `goto NAME` statements, so the
+// dotted spelling students are taught has its dot removed.
 function stripPeriodFromGoto(code) {
-    pass1 = code;
+    var pass1 = code;
     // removing '.' in front of labels and gotos
     // so that the pyangelo grammar works
-    pass1 = pass1.replace(/label \./g, "label ")  
-    pass1 = pass1.replace(/goto \./g, "goto ") 
+    pass1 = pass1.replace(/label \./g, "label ")
+    pass1 = pass1.replace(/goto \./g, "goto ")
 	return pass1;
+}
+
+// CPython has no such statements - but `label .foo` already parses as an
+// attribute access on a name, so normalising *towards* the dot makes the whole
+// construct legal Python that the runtime can then give meaning to. Both
+// spellings in the corpus converge here: 83 files write `goto .foo`, 6 write
+// `goto foo`.
+//
+// Line-preserving, like every pass in this file: the step debugger highlights
+// lines in the editor and errors are reported against the student's own line
+// numbers.
+function attributiseGotoLabels(code) {
+    return code.replace(
+        /^([ \t]*)(goto|label)[ \t]+\.?([A-Za-z_]\w*)[ \t]*$/gm,
+        "$1$2.$3"
+    );
 }
 
 String.prototype.replaceAt = function(index, replacement) {
@@ -106,6 +124,14 @@ function run_lexer(code) {
 // as a result, slowPrint() will require named arguments for delay and newLine
 // VERY HACKY!
 function replacePrintConcatenationWithArgs(code) {
+    // This used to read `pass1` without ever assigning it - an implicit global
+    // that stripPeriodFromGoto happened to leave holding this exact string,
+    // because it ran immediately before and returned what it had stored. That
+    // accident broke the moment the Pyodide path started normalising gotos with
+    // a properly scoped function instead, and every ?wheels=1 program died with
+    // "pass1 is not defined". Same value, now declared where it is used.
+    var pass1 = code;
+
     // print("a" + 2 + 3 + "b") => print("a", 2 , 3 , "b", sep = "")
     // print("a" + (2 + 3) + "b") => print("a", (2 + 3), "b", sep = "")
     // only works for single line prints, not preformatted multi-line strings
@@ -182,7 +208,7 @@ function replacePrintConcatenationWithArgs(code) {
 // preprocess the code to relax language grammar rules for newbies!
 function pygmify(code)
 {
-    pass1 = code;
+    var pass1 = code;
     
     // removing '.' in front of labels and gotos
     // so that the pyangelo grammar works

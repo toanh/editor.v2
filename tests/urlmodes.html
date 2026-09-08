@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>RUNNING</title>
+<style>
+  #frames { position: absolute; left: -10000px; top: 0; width: 900px; height: 600px; }
+  #frames iframe { width: 900px; height: 600px; border: 0; }
+  body { font-family: monospace; font-size: 12px; }
+  .pass { color: #197a19; } .fail { color: #c00; font-weight: bold; }
+</style>
+</head>
+<body>
+<!--
+  Exercises the URL-parameter surface: the ?code=, localStorage and
+  button-visibility paths that the curriculum harness never touches, because
+  every file it runs comes in through ?project=.
+
+    chrome --headless --disable-gpu --virtual-time-budget=300000 --dump-dom \
+      http://localhost:8000/tests/urlmodes.html > urlmodes.html
+-->
+<pre id="status">running…</pre>
+<pre id="out"></pre>
+<div id="frames"></div>
+
+<script>
+var results = [];
+
+function boot(query, opts) {
+  opts = opts || {};
+  return new Promise(function (resolve) {
+    if (opts.presetStorage) {
+      try { localStorage.setItem(opts.presetStorage[0], opts.presetStorage[1]); } catch (e) {}
+    }
+    var frame = document.createElement("iframe");
+    frame.src = "../editor.html?" + query;
+    document.getElementById("frames").appendChild(frame);
+
+    var chunks = [];
+    var started = Date.now();
+    var hooked = false;
+    var done = false;
+
+    function settle(reason) {
+      if (done) return;
+      done = true;
+      var w = frame.contentWindow;
+      // Read the rendered console rather than relying on the outputf hook.
+      // An autorun program finishes in a microtask, well before iframe.onload
+      // gives us a chance to install the hook, so the hook alone misses it.
+      var snap = { output: chunks.join(""), reason: reason };
+      try {
+        var pre = w.document.getElementById("console");
+        snap.output += pre ? pre.textContent : "";
+        snap.editorValue = w.Editor ? w.Editor.getValue() : null;
+        snap.codestring = w.codestring;
+        snap.buttons = {};
+        ["runButton", "stepButton", "saveButton", "codestoreURL"].forEach(function (id) {
+          var el = w.document.getElementById(id);
+          snap.buttons[id] = el ? el.style.display : "?";
+        });
+      } catch (e) { snap.error = String(e); }
+      frame.parentNode.removeChild(frame);
+      resolve(snap);
+    }
+
+    frame.onload = function () {
+      (function poll() {
+        var w = frame.contentWindow;
+        try {
+          // Hook output as soon as the page's globals exist, before any
+          // autorun has had a chance to print.
+          if (!hooked && w && typeof w.outputf === "function") {
+            w.outputf = function (t) { chunks.push(String(t)); };
+            var origStop = w.stopSkulpt;
+            w.stopSkulpt = function () {
+              try { origStop.apply(w, arguments); } catch (e) {}
+              setTimeout(function () { settle("program ended"); }, 30);
+            };
+            hooked = true;
+          }
+        } catch (e) {}
+        if (Date.now() - started > (opts.settleMs || 2500)) return settle("settled");
+        setTimeout(poll, 40);
+      })();
+    };
+  });
+}
+
+function check(name, cond, detail) {
+  results.push({ name: name, ok: !!cond, detail: detail || "" });
+}
+
+(async function () {
+  var st = document.getElementById("status");
+
+  // 1. ?code= with autorun, windowed
+  st.textContent = "1/8 ?code= autorun";
+  var r1 = await boot("code=" + encodeURIComponent('print("hi from code param")') + "&autorun=1&nosave=1");
+  check("?code=&autorun runs the program", r1.output.indexOf("hi from code param") !== -1,
+        JSON.stringify(r1.output.slice(0, 80)));
+  check("?code= populates the editor", (r1.editorValue || "").indexOf("hi from code param") !== -1);
+
+  // 2. ?code= without autorun must NOT run
+  st.textContent = "2/8 ?code= no autorun";
+  var r2 = await boot("code=" + encodeURIComponent('print("should not run")') + "&nosave=1");
+  check("?code= without autorun does not run", r2.output.indexOf("should not run") === -1,
+        JSON.stringify(r2.output.slice(0, 80)));
+
+  // 3. ?code= headless implies a run
+  st.textContent = "3/8 ?code= headless";
+  var r3 = await boot("code=" + encodeURIComponent('print("headless ran")') + "&headless=1&nosave=1");
+  check("?code=&headless runs without autorun", r3.output.indexOf("headless ran") !== -1,
+        JSON.stringify(r3.output.slice(0, 80)));
+
+  // 3b. ?code= carrying the characters that URL round-tripping gets wrong.
+  //
+  // Both of these were real, shipped bugs that every other test missed because
+  // the fixtures above are all plain ASCII words:
+  //   %  - the source was decoded twice, so a bare "%" threw URIError: URI
+  //        malformed at top level and the rest of editor.js never ran. "%" is
+  //        Python's modulo operator, so the URL button produced links that
+  //        broke the editor for any program containing `i % 2`.
+  //   <  - boot() rewrote the address bar by concatenating *decoded* parameter
+  //        values, and the resulting document URL broke every relative
+  //        subresource load: Monaco's AMD modules and js/py/*.py both failed.
+  //   #  - any Python comment, which swallowed every later parameter into the
+  //        URL fragment.
+  st.textContent = "4/8 ?code= awkward characters";
+  var awkward = 'x = 7 % 3            # comment with < angle > brackets\n' +
+                'print("odd" if x else "even", "100% & <done>")\n';
+  var r3b = await boot("code=" + encodeURIComponent(awkward) + "&autorun=1&nosave=1");
+  check("?code= survives %, < and # round-tripping",
+        r3b.output.indexOf("100% & <done>") !== -1, JSON.stringify(r3b.output.slice(0, 120)));
+  check("?code= puts the exact source in the editor",
+        (r3b.editorValue || "").indexOf("7 % 3") !== -1 &&
+        (r3b.editorValue || "").indexOf("< angle >") !== -1,
+        JSON.stringify((r3b.editorValue || "").slice(0, 120)));
+
+  // 4. ?project= populates the editor but does not run without autorun
+  st.textContent = "5/8 ?project= no autorun";
+  var r4 = await boot("project=example&name=__urlmodes_a__&nosave=1");
+  check("?project= loads the source", (r4.codestring || "").length > 0,
+        "codestring bytes " + (r4.codestring || "").length);
+  check("?project= without autorun does not run", r4.output.length === 0,
+        JSON.stringify(r4.output.slice(0, 80)));
+
+  // 5. localStorage path: no project, just a remembered filename
+  st.textContent = "6/8 localStorage";
+  var r5 = await boot("name=__urlmodes_ls__&autorun=1&nosave=1",
+                      { presetStorage: ["__urlmodes_ls__", 'print("from local storage")'] });
+  check("localStorage source runs with autorun",
+        r5.output.indexOf("from local storage") !== -1, JSON.stringify(r5.output.slice(0, 80)));
+
+  // 6. button visibility params - these were silently ignored before the
+  //    param block moved above the load branch
+  st.textContent = "7/8 ?norun / ?nosnap";
+  var r6 = await boot("project=example&name=__urlmodes_b__&norun=1&nosnap=1&nosave=1");
+  check("?norun hides the Run button", r6.buttons.runButton === "none",
+        "runButton display=" + r6.buttons.runButton);
+  check("?nosnap hides the snapshot button", r6.buttons.codestoreURL === "none",
+        "codestoreURL display=" + r6.buttons.codestoreURL);
+  check("?nosave hides the Save button", r6.buttons.saveButton === "none",
+        "saveButton display=" + r6.buttons.saveButton);
+
+  try { localStorage.removeItem("__urlmodes_ls__"); } catch (e) {}
+
+  var failed = results.filter(function (r) { return !r.ok; });
+  document.getElementById("out").textContent =
+    JSON.stringify({ total: results.length, failed: failed.length, results: results }, null, 1);
+  st.innerHTML = results.map(function (r) {
+    return '<span class="' + (r.ok ? "pass" : "fail") + '">' +
+           (r.ok ? "PASS  " : "FAIL  ") + r.name + (r.detail ? "   [" + r.detail + "]" : "") +
+           "</span>";
+  }).join("\n") + "\n\n" + failed.length + " failed of " + results.length;
+  document.title = "DONE";
+})();
+</script>
+</body>
+</html>

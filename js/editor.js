@@ -1,4 +1,8 @@
-Sk.builtins.webServiceURL = new Sk.builtin.str("https://codestore-348206.ts.r.appspot.com/");
+// Base URL for the codestore and classroom web services. `?webservice=`
+// overrides it during startup. Kept as a plain string here and pushed into the
+// interpreter via Runtime.setWebServiceURL(), so nothing outside the runtime
+// backend has to know how the interpreter stores it.
+var webServiceURL = "https://codestore-348206.ts.r.appspot.com/";
 
 var animID = null;
 
@@ -377,7 +381,7 @@ async function getCodestoreURL() {
 	animID = window.requestAnimationFrame(animateURL);
 	
 	var xhr = new XMLHttpRequest();
-	xhr.open("POST", Sk.builtins.webServiceURL.v + 'put', true);
+	xhr.open("POST", webServiceURL +'put', true);
 	xhr.setRequestHeader('Content-type', 'application/x-www-form-urlencoded');
     xhr.timeout = 10000; // time in milliseconds
 
@@ -411,7 +415,7 @@ async function getCodestoreURL() {
 		window.cancelAnimationFrame(animID);
 	  }
 	}
-	var code = ace.edit("editor").getValue();
+	var code = Editor.getValue();
 
 	saveToLocalStorage();
 	sendURL = "code="+ encodeURIComponent(code);
@@ -469,32 +473,16 @@ function setThemeByButton() {
 }
 
 function setTheme() {
+	// The step-line highlight is a marker owned by the editor backend and
+	// styled by .step-line in css/styles.css, so it survives a theme change
+	// on its own - nothing to re-apply here.
 	if (document.getElementById("lightTheme") !== null && document.getElementById("lightTheme").checked) {
 		urlParams.set('light', 1);
-		editor.setTheme("ace/theme/eclipse");
+		Editor.setTheme("light");
 	}
 	else {
-		editor.setTheme("ace/theme/monokai");
+		Editor.setTheme("dark");
 		urlParams.delete('light')
-		// add step highlighting if debugging is on
-		if (stepRun) {
-			for (i = 0; i < document.styleSheets.length; i++) {
-				let styleSheet =  document.styleSheets[i];
-				if (styleSheet.ownerNode.id == "ace-monokai") {
-					for (j = 0; j < styleSheet.cssRules.length; j++) {
-						var rule = styleSheet.cssRules[j];
-						if (rule.cssText.indexOf(".ace_active-line") != -1 && rule.cssText.indexOf(".ace_marker-layer") != -1) {
-							break;
-						}
-					}	
-					// only if the existing rule is not the last one... (the rule in the template, and not the one we added previously)
-					// then add a new rule
-					if (j < styleSheet.cssRules.length - 1) {
-						styleSheet.insertRule(".ace-monokai .ace_marker-layer .ace_active-line {background: #208020}", styleSheet.cssRules.length);				
-					}					
-				}
-			}
-		}		
 	}
 }
  
@@ -587,14 +575,14 @@ function generateURL()
 {
 	var url = window.location.href.split("?")[0];
 
-	url = url + "?code=" + encodeURIComponent(ace.edit("editor").getValue());
+	url = url + "?code=" + encodeURIComponent(Editor.getValue());
 
 	copyToClipboard(url, "URL copied to clipboard.", "Unable to copy URL to clipboard. Please copy the URL below manually: \n" + url);
 }
 
 function copyCode()
 {
-	var code = ace.edit("editor").getValue();
+	var code = Editor.getValue();
 	navigator.clipboard.writeText(code);
 
 	copyToClipboard(code, "Code copied to clipboard.", "Unable to copy code to clipboard. Please copy the code manually.");
@@ -641,7 +629,7 @@ async function saveCodeFS(filename)
 	],
   };
   const handle = await window.showSaveFilePicker(options);
-  var code = ace.edit("editor").getValue();
+  var code = Editor.getValue();
 
   const writable = await handle.createWritable();
   // Write the contents of the file to the stream.
@@ -662,7 +650,7 @@ function saveCodeFilesaver(filename) {
 	{
 		return;
 	}
-	var code = ace.edit("editor").getValue();
+	var code = Editor.getValue();
 	var file = new File([code], filename + ".txt", {type: "text/plain;charset=utf-8"});
 	saveAs(file);
 	saveToLocalStorage();
@@ -671,7 +659,7 @@ function saveCodeFilesaver(filename) {
 function saveToLocalStorage()
 {
   try {
-	var code = ace.edit("editor").getValue();
+	var code = Editor.getValue();
 	localStorage.setItem(filename, code);
   }
   catch(e) {
@@ -705,7 +693,7 @@ async function loadCodeFS()
 	codestring = await file.text();
 
 	checkForPyangelo(codestring);
-	editor.setValue(codestring, -1);
+	Editor.setValue(codestring);
 	clearConsole();//pyConsole.innerHTML = "";            
 	stopEditor();            
 }
@@ -720,7 +708,7 @@ function userLoadCode(event) {
 		codestring = e.target.result;
 		return function (e) {
 			checkForPyangelo(codestring);
-			editor.setValue(codestring, -1);
+			Editor.setValue(codestring);
 			clearConsole();//pyConsole.innerHTML = "";
 		};
 	})(file);
@@ -759,74 +747,12 @@ function singleStep() {
 	});
 }
 
-// traverses through hierarchy of $loc variables and populates the tracetable
-function recursivePopulateTraceTable(susp, traces) {
-	if (susp.child == null) {
-		return traces;
-	}
-	traces = recursivePopulateTraceTable(susp.child, traces);
-	var child = susp.child;
-	if (child.hasOwnProperty("$loc")) {
-		var locals = child.$loc;
-		let temp_traces = [];
-		for (let property in locals) {
-			if (property.substring(0, 2) == property.substring(property.length - 2) && property.substring(0, 2) == "__") {
-				continue;
-			}
-			if (property.substring(0, 1) == "$") {
-				continue;
-			}
-			if (locals[property] !== undefined && "v" in locals[property]) {
-				temp_traces.push([property, locals[property].v]);
-				//temp_traces.push(property + ":" + locals[property].v);
-				//console.log(property + ":" + locals[property].v);
-			}
-		}
-		for (let i in temp_traces) {
-			traces.push(temp_traces[i]);
-		}	
-		
-	}
-	
-	if (child.hasOwnProperty("$tmps")) {
-		var temps = child.$tmps;
-		let temp_traces = [];
-		for (let property in temps) {
-			if (property.substring(0, 2) == property.substring(property.length - 2) &&  property.substring(0, 2) == "__") {
-				continue;
-			}		
-			if (property.substring(0, 1) == "$") {
-				continue;
-			}
-			if (temps[property] !== undefined && "v" in temps[property]) {
-				//console.log(property + ":" + temps[property].v);
-				//temp_traces.push(property + ":" + temps[property].v);
-				temp_traces.push([property, temps[property].v]);
-			}
-		}
-		for (let i in temp_traces) {
-			traces.push(temp_traces[i]);
-		}			
-	}	
-	return traces;
-}
-
-function sanitiseTraceName(name) {
-	// checking if variable are reserved words in skulpt (reserved words have _$rw$ appended to it)
-	if (name.substr(-5) == "_$rw$") {
-		// if so, remove postfix from name in trace table
-		name = name.substr(0, name.length - 5);
-	}
-	return name;
-}
-
 var prevTraces = null;
-function populateTraceTable(susp) {
-	if (document.getElementById("watch-table") === null) {
+// traces is [[name, value], ...] as supplied by the runtime.
+function populateTraceTable(traces) {
+	if (document.getElementById("watch-table") === null || traces == null) {
 		return;
 	}
-	console.log("=======")
-	var traces = recursivePopulateTraceTable(susp, []);
 
 	var tabledata = [];
 	for (n = 0; n < traces.length; n++) {
@@ -845,10 +771,10 @@ function populateTraceTable(susp) {
 			{title:"Name", field:"name", width:100, formatter:function(cell, formatterParams, onRendered){
 				let name = cell.getValue();
 				if (prevTraces == null || !(name in prevTraces)) {
-					return "<span style='color:red; font-weight: bold;'>" + sanitiseTraceName(cell.getValue()) + "</span>"
+					return "<span style='color:red; font-weight: bold;'>" + cell.getValue() + "</span>"
 				}
 				else {
-					return sanitiseTraceName(cell.getValue());
+					return cell.getValue();
 				}
 			}},
 			{title:"Value", field:"value", hozAlign:"right", width:100, formatter:function(cell, formatterParams, onRendered){
@@ -869,68 +795,15 @@ function populateTraceTable(susp) {
 		for (n = 0; n < traces.length; n++) {
 			prevTraces[traces[n][0]] = traces[n][1];
 	}});
-
-	console.log(traces);
 }
 
-var prevLine = -1;
-async function nextlineStepper(susp) {
-	checkForStop();
-	try {
-		populateTraceTable(susp);
-		var child = susp.child;
-		
-		// record the last child which was from <stdin.py> - this would be
-		// the deepest level code in our current active display (e.g. function calling functions etc.)
-		var lastStdinChild = child;
-		
-		while ((child.child.child != null))
-		{
-			child = child.child;
-			if (child.$filename === "<stdin>.py") {
-				lastStdinChild = child;
-			}
-		}
-
-		child = lastStdinChild;
-		if (child.$lineno != prevLine)
-		{
-			editor.gotoLine(child.$lineno);
-			await singleStep();
-			prevLine = child.$lineno;
-		}
-
-		// Return an already-resolved promise in this case
-		return Promise.resolve(susp.resume());
-	} catch(e) {
-		return Promise.reject(e);
-	}
-}
-
-// autostepper, 1 second delay per line run (slow-mo)
-async function lineStepper(susp) {
-	checkForStop();
-	try {
-		var child = susp.child;
-		while (child.child.child != null)
-		{
-			child = child.child;
-		}
-		if (child.$lineno != prevLine)
-		{
-			editor.gotoLine(child.$lineno);
-			await sleep(1000);
-			prevLine = child.$lineno;
-		}
-		return Promise.resolve(susp.resume());
-	} catch(e) {
-		return Promise.reject(e);
-	}
-}
-
-function checkForStop() {
-	if (_stopped)
-		throw 'Stopped!';
+// Called by the runtime each time execution reaches a new line in step mode.
+// Returns a promise that resolves when the student is ready to advance:
+// either the Next button, or a fixed delay in ?autostep slow-mo.
+function onStepLine(info) {
+	populateTraceTable(info.locals);
+	Editor.setStepLine(info.lineno);
+	return autostep != null ? sleep(1000) : singleStep();
 }
 
 function logError(text)
@@ -940,43 +813,11 @@ function logError(text)
 	outputf("\u001b[ 0;2;0;0;0 m" + "\u001b[ 38;2;255;0;0 m" + text + "\n" + "\u001b[ 0;2;0;0;0 m");
 }
 
-function getStyleSheet(unique_title) {
-  for(var i=0; i<document.styleSheets.length; i++) {
-	var sheet = document.styleSheets[i];
-	if(sheet.title == unique_title) {
-	  return sheet;
-	}
-  }
-}
-
-function errToString(err) {	
-	let ret = err.tp$name;
-	if (!ret) {
-		return err;
-	}
-	ret += ": " + err.tp$str().v;
-	if (err.traceback.length !== 0) {
-		for (i = 0; i < err.traceback.length; i++) {
-			if (err.traceback[i].filename == "<stdin>.py") {
-				ret += " on line " + err.traceback[i].lineno;
-				break;
-			}
-		}
-		// find the first <stdin> filename in the trace
-		if (i == err.traceback.length) {
-			ret += " on line " + err.traceback[0].lineno;
-		}
-	} else {
-		ret += " at <unknown>";
-	}
-	return ret;	
-}
-
 var stepRun = false;
 function runSkulpt(stepMode, code = "") {
 	stepRun = stepMode;
 	if (!headless) {
-		code = ace.edit("editor").getValue();
+		code = Editor.getValue();
 		saveToLocalStorage();
 	} else {
 		var clearButton = document.getElementById("consoleClear");
@@ -985,7 +826,8 @@ function runSkulpt(stepMode, code = "") {
 		}
 	}
 	code = run_lexer(code);
-	code = stripPeriodFromGoto(code);
+	// Each interpreter wants goto/label spelled its own way.
+	code = Runtime.normaliseGotoLabels(code);
 	if (document.getElementById("trainingWheels") !== null && document.getElementById("trainingWheels").checked) {
 		code = replacePrintConcatenationWithArgs(code);
 		code = pygmify(code);
@@ -1000,7 +842,6 @@ function runSkulpt(stepMode, code = "") {
 	setDisplayMode(usingPyangelo ? "canvas": display);
 	if (usingPyangelo) document.getElementById("pyangelo").focus();
 
-	_stopped = false;
 	stopButton.style.display = "inline";
 	stepButton.style.display = "none";
 	runButton.style.display = "none";
@@ -1014,77 +855,33 @@ function runSkulpt(stepMode, code = "") {
 
 	let usingPyangeloBuiltin = checkForBuiltinPyangelo(code);
 
-	Sk.configure({
-		output: outputf,
-		inputfun: inputf,
-		inputfunTakesPrompt: usingPyangelo ? true : false,
-		debugging: usingPyangeloBuiltin ? false : true,
-		killableWhile: true,
-		//breakpoints: function() { return true; },
-		__future__: Sk.python3
-	});
-
-	// turtle graphics
-	(Sk.TurtleGraphics || (Sk.TurtleGraphics = {})).target = 'turtleCanvas';
-
-	var handlers = {};
-	handlers["*"] = checkForStop;
 	if (stepRun) {
-		prevLine = 0;
-
-
 		// TODO: OOP all of this and make this a member variable NOT Globals!!
 		prevTraces = null;
 
 		// display watch table frame
 		createWatchTableFrame(200, 100);
 		// set readOnly for step mode
-		editor.setReadOnly(true);
-	
-		// insert step highlight rule if one doesn't already exist (need to check if user toggles theme, the rule can be re-added)
-		if (!document.getElementById("lightTheme").checked) {
-			for (i = 0; i < document.styleSheets.length; i++) {
-				let styleSheet =  document.styleSheets[i];//getStyleSheet('ace-monokai');
-				if (styleSheet.ownerNode.id == "ace-monokai") {
-					for (j = 0; j < styleSheet.cssRules.length; j++) {
-						var rule = styleSheet.cssRules[j];
-						if (rule.cssText.indexOf(".ace_active-line") != -1 && rule.cssText.indexOf(".ace_marker-layer") != -1) {
-							break;
-						}
-					}	
-					// only if the existing rule is not the last one... (the rule in the template, and not the one we added previously)
-					// then add a new rule
-					if (j < styleSheet.cssRules.length - 1) {
-						styleSheet.insertRule(".ace-monokai .ace_marker-layer .ace_active-line {background: #208020}", styleSheet.cssRules.length);				
-					}					
-				}
-			}
-		}
-		prevLine = -1;
-		if (autostep != null) {
-			handlers["Sk.debug"] = lineStepper;
-			handlers["Sk.delay"] = lineStepper;
-		}
-		else {
-			handlers["Sk.debug"] = nextlineStepper;
-			handlers["Sk.delay"] = nextlineStepper;
+		Editor.setReadOnly(true);
+		Editor.clearStepLine();
+		if (autostep == null) {
 			// shorten stop button
 			stopButton.style.width = "72px";
 			nextButton.style.display = "inline";
 		}
 	}
 
-	var e = Sk.misceval.asyncToPromise((function() {
-		var a;
-		try {
-			a = Sk.importMainWithBody("<stdin>", true, code, true);
-		}
-		catch (err) {
-			logError(errToString(err));
-		}
-		return a;
-		})
-		, handlers);
+	var e = Runtime.run({
+		code: code,
+		stepMode: stepRun,
+		autoStep: autostep != null,
+		takesPrompt: usingPyangelo ? true : false,
+		debugging: usingPyangeloBuiltin ? false : true,
+		onOutput: outputf,
+		onInput: inputf,
+		onStep: onStepLine,
+		onError: logError
+	});
 	e.catch((function(err) {
 		if (err.message) {
 		   logError(err.message);
@@ -1095,7 +892,7 @@ function runSkulpt(stepMode, code = "") {
 		   }
 		}
 		else {
-			logError(errToString(err));
+			logError(Runtime.formatError(err));
 			if (err.stack)
 			{
 				logError(err.stack);
@@ -1107,45 +904,25 @@ function runSkulpt(stepMode, code = "") {
 }
 
 function stopSkulpt() {
-	editor.setReadOnly(false);
+	Editor.setReadOnly(false);
+	Editor.clearStepLine();
 	stopAllSounds();
 	stopAllHue();
 	hideSpinner();
 	destroyWebCam();
 	destroyWatchTableFrame();
 	// stop the keylisteners for pyangelo
-	Sk.PyAngelo.stopPyangelo();
+	Runtime.teardown();
 	// Don't always destroy pyangelo frame - leave hanging for any one-off images
 	// destroyPyangeloFrame();
 
 	stopBabylon();
 	// if stop button pressed then kill pyangelo frame
 	// otherwise leave it up after the program ends
-	if (_stopped) {
+	if (Runtime.isStopped()) {
 		destroyPyangeloFrame();
 	}
 
-	if (stepRun) {
-		// remove step highlighting
-		// need to check all stylesheets regardless of what the current theme is because user could have
-		// flipped the theme during debug stepping
-		for (i = 0; i < document.styleSheets.length; i++) {
-			let styleSheet =  document.styleSheets[i];
-			if (styleSheet.ownerNode.id == "ace-monokai") {
-				// delete any highlight rules from the end
-				// when we first encounter a non-highlight rule we stop
-				// (assumes that the template highlight rule is NOT at the end!)
-				for (j =  styleSheet.cssRules.length - 1; j >= 0; j--) {
-					var rule = styleSheet.cssRules[j];
-					if (rule.cssText.indexOf(".ace_active-line") != -1 && rule.cssText.indexOf(".ace_marker-layer") != -1) {
-						styleSheet.deleteRule(j);
-					} else {
-						break;
-					}
-				}
-			}
-		}
-	}
 	just_run = false;
 
 	stopButton.style.display = "none";
@@ -1187,7 +964,7 @@ function stopSkulpt() {
 }
 
 function stopEditor() {
-	_stopped = true;
+	Runtime.stop();
 	if (inputElement != null)
 	{
 		// if stopped during an input...
@@ -1410,6 +1187,12 @@ function setDisplayMode(mode) {
 			window.dispatchEvent(new Event('resize'));
 		}).observe(document.getElementById('leftpane'));
 	}
+
+	// Every branch above re-parents #editor. Monaco watches its container for
+	// resizes, but a detached-then-reattached container measures 0x0 and the
+	// observer alone does not always recover, so re-measure once the browser
+	// has laid the new arrangement out.
+	requestAnimationFrame(function () { Editor.layout(); });
 }
 
 function prefixedCalc () {
@@ -1426,15 +1209,17 @@ function resetEditor() {
 	{
 		clearConsole();
 		resetConsole();
-		editor.setValue("", -1);
+		Editor.setValue("");
 		// clear local storage
 		localStorage.removeItem(filename);		
 		if (esc != null && esc.length > 0)
 		{
-			codestring = decodeURIComponent(esc);
+			// Already decoded by URLSearchParams - see the note at the ?code=
+			// parse site.
+			codestring = esc;
 			usingPyangelo = checkForPyangelo(codestring);
 			setDisplayMode(usingPyangelo ? "canvas": display);
-			editor.setValue(codestring, -1);
+			Editor.setValue(codestring);
 
 			saveToLocalStorage();
 		}
@@ -1452,7 +1237,7 @@ function resetEditor() {
 					codestring = client.responseText;
 					usingPyangelo = checkForPyangelo(codestring);
 					setDisplayMode(usingPyangelo ? "canvas": display);
-					editor.setValue(codestring, -1);
+					Editor.setValue(codestring);
 				}
 
 				//saveToLocalStorage();
@@ -1492,47 +1277,38 @@ function openPiskel() {
 	window.open('piskel', '_blank');
 }
 
-// setting up the ace editor
+// setting up the editor
 checkBrowser();
 
 var pyConsole = document.getElementById("console");
 
-var editor = ace.edit("editor");
-var darkTheme = true;
-ace.require("ace/ext/language_tools");
-editor.setTheme("ace/theme/monokai");
-editor.session.setMode("ace/mode/python");
-editor.setOptions({
-  fontSize: "12pt",
-  fixedWidthGutter: true,
-  showPrintMargin: false,
-  scrollPastEnd: 0.5
-});
-editor.setHighlightActiveLine(true);
+// Monaco is the editor; ?editor=ace falls back to the old one while the switch
+// beds in. The Ace path goes away once Skulpt does.
+var editorParam = new URLSearchParams(window.location.search).get('editor');
+Editor.use(editorParam === "ace" ? AceEditorBackend : MonacoEditorBackend);
 
 // code here to define custom strings?
 
-Sk.configure({
-	__future__: Sk.python3
-});
+// Choosing the backend is synchronous and cheap; starting it is not, so
+// Runtime.boot() and the Host binding happen in boot() at the end of the file.
+// Skulpt is still the default; ?runtime=pyodide opts in. Pyodide needs JSPI
+// (Chrome/Edge 137+) for its blocking calls, so an unsupported browser falls
+// back rather than loading 13 MB it cannot use.
+var runtimeParam = new URLSearchParams(window.location.search).get('runtime');
+if (runtimeParam === "pyodide" && !PyodideRuntime.isSupported()) {
+	runtimeParam = "skulpt";
+	console.warn("This browser has no WebAssembly JSPI; falling back to Skulpt.");
+}
+Runtime.use(runtimeParam === "pyodide" ? PyodideRuntime : SkulptRuntime);
 
-// expanding the default size of the autocompleter
-// TODO: adjust this on the fly based on the length of the autocompletions: https://stackoverflow.com/questions/47708044/changing-the-width-of-autocompleter
-document.styleSheets[0].insertRule(`
-	.ace_editor.ace_autocomplete {
-		width: 420px !important;
-	}`, 0);
+// Completions offered once the code imports goodies.
+// This used to test `'goodies' in Sk.parse(...).cst.used_names`, which matched
+// any use of the name - a variable called `goodies` counted. Matching the
+// import statement is both more precise and free of any interpreter coupling.
+var goodiesImportPattern = /^\s*(?:from|import)\s+goodies\b/m;
 
-// Create custom completer
-var customCompleter = {
-    getCompletions: function(editor, session, pos, prefix, callback) {
-		let ast = Sk.parse("<stdin>.py", ace.edit("editor").getValue());
-		// TODO: check for goodies imported as a module
-		// currently it just checks to see if goodies is a name in the sym table (could be a variable, function etc. not guaranteed to be the imported module)
-        
-		//let astNode = Sk.astFromParse(ast.cst);
-        
-		if ('goodies' in ast.cst.used_names) {
+function goodiesCompletions(code) {
+		if (goodiesImportPattern.test(code)) {
 			/*
 			// TODO: bring this back after improving the formating of the doc text, also investigate optional parameters
 			var wordList = [
@@ -1579,24 +1355,14 @@ var customCompleter = {
 					meta: 'function',
 				}
 				// Add more completions as needed
-			];			
-			callback(null, wordList);
+			];
+			return wordList;
 		}
-    }
-};
+		return null;
+}
 
-// Add the custom completer to editor's completers
-// disable completers for now
-// autocompletions for ace editor
-
-/*
-editor.setOptions({
-	enableBasicAutocompletion: true,
-	enableSnippets: true,
-	enableLiveAutocompletion: true
-});
-editor.completers = [customCompleter];
-*/
+// Completions are still disabled; uncomment to turn them on.
+// Editor.registerCompletions(goodiesCompletions);
 
 
 document.getElementById('file-input').addEventListener('change', userLoadCode, false);
@@ -1615,7 +1381,6 @@ var fsButton = document.getElementById("fullscreenButton");
 var piskelButton = document.getElementById("piskelButton");
 
 var just_run = false;
-var _stopped = false;
 var inputElement = null;
 
 resetCanvas();
@@ -1642,7 +1407,8 @@ if (webserviceURLParam != null && webserviceURLParam.length > 0)
 	if (webserviceURLParam.slice(-1) != "/") {
 		webserviceURLParam += "/";
 	}
-	Sk.builtins.webServiceURL = new Sk.builtin.str(webserviceURLParam);
+	// boot() pushes this into the interpreter once it is up.
+	webServiceURL = webserviceURLParam;
 }
 
 // training wheels
@@ -1693,25 +1459,29 @@ stepButton.style.display = "none";
 autorun = urlParams.get('autorun')
 autorun =  (autorun != null && autorun.length > 0);
 
-// embedded code in the URL
+// embedded code in the URL. The editor does not exist yet - Monaco's loader is
+// asynchronous - so boot() puts the source in once it does.
 esc = urlParams.get('code')
 if (esc != null && esc.length > 0) {
-	esc = decodeURIComponent(esc);
+	// URLSearchParams.get() has already percent-decoded this. Decoding a
+	// second time - which this used to do - corrupts any literal %XX in the
+	// student's source and throws URIError: URI malformed on a bare "%".
+	// Since "%" is Python's modulo operator, that made the URL button produce
+	// links that broke the editor outright for any program containing `i % 2`:
+	// an uncaught exception at top level, so the rest of this file never ran.
 	usingPyangelo = checkForPyangelo(esc);
 	setDisplayMode(usingPyangelo ? "canvas": display);
-	editor.setValue(esc, -1);
 }
 
-// dark/light theme
+// dark/light theme. Recorded here, applied by boot() as the editor is created,
+// so there is no flash of the wrong theme.
 light = urlParams.get('light')
+var startTheme = "dark";
 if (light != null && light.length > 0) {
-	editor.setTheme("ace/theme/eclipse");
+	startTheme = "light";
 	if (document.getElementById("lightTheme") !== null)
         document.getElementById("lightTheme").checked = true;
 	themeButton.innerText = "⚫ Theme";
-}
-else {
-	editor.setTheme("ace/theme/monokai");
 }
 
 // code store id
@@ -1747,6 +1517,8 @@ if (localStorage.getItem(filename) !== null && !(id != null && id.length > 0) &&
 }
 */
 
+var editorDiv = document.getElementById("editor");
+
 function setSpinnerInEditor(visible) {
 	if (visible) {
 		spinner.style.display = "block";
@@ -1757,178 +1529,12 @@ function setSpinnerInEditor(visible) {
 	}
 }
 
-var codestring = "";
-// load code by id from codestore
-// only if code not provided in URL
-if (!(esc != null && esc.length > 0)) {
-	if (g_id != null && g_id.length > 0) {
-		var xhr2 = new XMLHttpRequest();
-		var editorDiv = document.getElementById("editor"); 
-		var consoleDiv = document.getElementById("console"); 
-
-		xhr2.open("GET", Sk.builtins.webServiceURL.v + 'get?id=' + g_id, true);
-
-		if (!headless) {
-			setSpinnerInEditor(true);
-			editor.setValue("# Loading code... please wait.", -1);
-		} 
-		else {
-			spinner.style.display = "block";
-			consoleDiv.appendChild(spinner);
-			setupHeadless();
-		}
-
-		xhr2.timeout = 10000; // time in milliseconds
-
-		xhr2.onreadystatechange = function() { 
-			if (this.readyState === XMLHttpRequest.DONE) {
-				if (this.status === 200) {
-					// don't check local storage for when there are ids
-					// btw, we purge the id from the URL params when the page is loaded
-					// this is so users don't save to local storage and think the code is actually part of the codestore id in the URL		
-					codestring = xhr2.responseText;
-					usingPyangelo = checkForPyangelo(codestring);
-					setDisplayMode(usingPyangelo ? "canvas": display);
-
-					// TODO: untested line below - always populate the editor with the retrieved code
-					// needed for 'rerun' functionality
-					//editor.setValue(codestring, -1);
-
-					if (!headless) {
-						spinner.style.display = "none";
-						editorDiv.removeChild(spinner);		
-						editor.setValue(codestring, -1);							
-						if (autorun) {
-							runSkulpt(false, codestring);
-						}							
-					}
-					else {
-						// let's run!
-						spinner.style.display = "none";
-						consoleDiv.removeChild(spinner);		
-						if (!compiled) {
-							runSkulpt(false, codestring);
-						}
-						else {
-							// the Sk.onAfterCompiled() callback will run the pre-compiled codestring
-							// this just triggers an empty run to kick things off				
-							runSkulpt(false, "");
-						}
-					}		
-				}
-			}
-		}
-
-		xhr2.ontimeout = (e) => {
-			console.log("Timeout on retrieving code from id:" + g_id + ". Please check the URL and try again.");    
-			setSpinnerInEditor(false);
-			showURLDialog("Timeout on retrieving code from id:" + g_id + ". Please check the URL and try again.");            
-		};    
-	
-		xhr2.onerror = function() {
-			console.log("Error with retrieving code from id:" + g_id + ". Please check the URL and try again.");
-			setSpinnerInEditor(false);
-			showURLDialog("Error with retrieving code from id:" + g_id + ". Please check the URL and try again.");            
-		}		
-		xhr2.send();   
-	}
-	// only open up project if there is no id
-	else if (project != null && project.length > 0) {
-		// only if there is nothing in local storage for that project
-		if (headless) {
-			setupHeadless();	
-		}
-
-		// if there's nothing in localstorage for this project OR its in precompiled mode ... load from webserver
-		if (localStorage.getItem(filename) === null || compiled) {
-			var client = new XMLHttpRequest();
-			// compiled files will not have .py extension
-			if (!compiled) {
-				project += ".py";
-			}
-			client.open("GET", "projects/" + project);
-			client.onreadystatechange = function () {
-				if (client.readyState == 4) {
-
-					if (localStorage.getItem(filename) === null || headless)
-					{
-						codestring = client.responseText;
-						usingPyangelo = checkForPyangelo(codestring);
-						setDisplayMode(usingPyangelo ? "canvas": display);
-						// TODO: untested line below - always populate the editor with the retrieved code
-						// needed for 'rerun' functionality
-						//editor.setValue(codestring, -1);						
-
-						if (!headless) {
-							editor.setValue(codestring, -1);
-							if (autorun) {
-								runSkulpt(false, codestring);
-							}
-						}
-						else {
-							if (!compiled) {
-								runSkulpt(false, codestring);
-							}
-							else {
-								// the Sk.onAfterCompiled() callback will run the pre-compiled codestring
-								// this just triggers an empty run to kick things off
-								runSkulpt(false, "");
-							}
-						}
-					}
-				}
-			};
-			client.send();
-		}
-		else {
-			codestring = loadFromLocalStorage();
-
-			if (!(codestring === null || codestring == "")) {
-				usingPyangelo = checkForPyangelo(codestring);
-				editor.setValue(codestring, -1);
-				setDisplayMode(usingPyangelo ? "canvas": display);
-				// can now run headless from local storage
-				if (autorun || headless) {
-					runSkulpt(false, codestring);
-				}				
-			}
-		}
-	}
-	// no id, and no project, so let's load from local storage
-	else {
-		if (headless) {
-			setupHeadless();	
-		}
-		codestring = loadFromLocalStorage();
-		if (!(codestring === null || codestring == "")) {
-			usingPyangelo = checkForPyangelo(codestring);
-			editor.setValue(codestring, -1);
-			setDisplayMode(usingPyangelo ? "canvas": display);
-
-			// can now run headless from local storage
-			if (autorun || headless) {
-				runSkulpt(false, codestring);
-			}			
-		}	
-	}
-}
-// code in URL via code parameter
-else {
-	if (headless) {
-		setupHeadless();
-		if (!compiled) {
-			runSkulpt(false, esc);
-		}
-		else {
-			// the Sk.onAfterCompiled() callback will run the pre-compiled codestring
-			// this just triggers an empty run to kick things off
-			runSkulpt(false, "");
-		}
-	}	
-	else if (autorun) {
-		runSkulpt(false, esc);
-	}
-}
+// Button visibility and the remaining run-behaviour params are resolved BEFORE
+// the load branch below, because several of its paths call runSkulpt()
+// synchronously. runSkulpt/stopSkulpt read nostep, norun and autostep, so
+// leaving these until afterwards meant they were still undefined on those
+// paths - `undefined != null` is false, so ?nostep, ?norun and ?autostep were
+// silently ignored depending on how the page happened to be loaded.
 
 // allows save (and load)
 nosave = urlParams.get('nosave')
@@ -2015,18 +1621,179 @@ var gutters = document.getElementsByClassName('gutter');
 if (gutters.length > 0 && gutters !== undefined)
 	gutters[0].style.zIndex = 10;
 
+var codestring = "";
+
+// Fetch a curriculum project. Resolves on readyState 4 regardless of status,
+// which is what the original code did - a 404 body becomes the "source" and
+// then fails to parse, in front of the student.
+function fetchProject(url) {
+	return new Promise(function (resolve) {
+		var client = new XMLHttpRequest();
+		client.open("GET", url);
+		client.onreadystatechange = function () {
+			if (client.readyState == 4) {
+				resolve(client.responseText);
+			}
+		};
+		client.send();
+	});
+}
+
+// Fetch a snapshot from the codestore, with the spinner in whichever pane is
+// visible. Resolves to null if the request times out or errors.
+function fetchFromCodestore() {
+	var consoleDiv = document.getElementById("console");
+	if (!headless) {
+		setSpinnerInEditor(true);
+		Editor.setValue("# Loading code... please wait.");
+	}
+	else {
+		spinner.style.display = "block";
+		consoleDiv.appendChild(spinner);
+		setupHeadless();
+	}
+
+	return new Promise(function (resolve) {
+		var xhr2 = new XMLHttpRequest();
+		xhr2.open("GET", webServiceURL + 'get?id=' + g_id, true);
+		xhr2.timeout = 10000; // time in milliseconds
+
+		xhr2.onreadystatechange = function () {
+			if (this.readyState === XMLHttpRequest.DONE && this.status === 200) {
+				// don't check local storage for when there are ids
+				// btw, we purge the id from the URL params when the page is loaded
+				// this is so users don't save to local storage and think the code is actually part of the codestore id in the URL
+				spinner.style.display = "none";
+				(headless ? consoleDiv : editorDiv).removeChild(spinner);
+				resolve(xhr2.responseText);
+			}
+			// A non-200 deliberately does nothing and leaves the spinner up.
+			// That is pre-existing behaviour, kept here so this refactor stays
+			// verifiable; ontimeout/onerror are the only paths that tell the
+			// student anything. Worth fixing separately.
+		};
+
+		xhr2.ontimeout = (e) => {
+			console.log("Timeout on retrieving code from id:" + g_id + ". Please check the URL and try again.");
+			setSpinnerInEditor(false);
+			showURLDialog("Timeout on retrieving code from id:" + g_id + ". Please check the URL and try again.");
+			resolve(null);
+		};
+
+		xhr2.onerror = function () {
+			console.log("Error with retrieving code from id:" + g_id + ". Please check the URL and try again.");
+			setSpinnerInEditor(false);
+			showURLDialog("Error with retrieving code from id:" + g_id + ". Please check the URL and try again.");
+			resolve(null);
+		};
+
+		xhr2.send();
+	});
+}
+
+// Where this page's program comes from, in priority order. Resolves to the
+// source, or null when there is nothing to load.
+async function acquireSource() {
+	// 1. embedded in the URL - already decoded and placed in the editor above
+	if (esc != null && esc.length > 0) {
+		if (headless) {
+			setupHeadless();
+		}
+		return esc;
+	}
+
+	// 2. a codestore snapshot
+	if (g_id != null && g_id.length > 0) {
+		return await fetchFromCodestore();
+	}
+
+	// 3. a curriculum project - unless the student has unsaved local edits,
+	//    in which case those win. Compiled payloads always come from the
+	//    server and keep their own file extension.
+	if (project != null && project.length > 0) {
+		if (headless) {
+			setupHeadless();
+		}
+		if (localStorage.getItem(filename) === null || compiled) {
+			if (!compiled) {
+				project += ".py";
+			}
+			return await fetchProject("projects/" + project);
+		}
+		return loadFromLocalStorage();
+	}
+
+	// 4. whatever the student last had open
+	if (headless) {
+		setupHeadless();
+	}
+	return loadFromLocalStorage();
+}
+
+// Startup. Everything above this point is synchronous DOM and URL-parameter
+// work; everything that has to wait - the interpreter coming up, the source
+// arriving over the network - happens here. Skulpt is ready immediately, but
+// Pyodide will not be, which is why this is shaped as an await.
+(async function boot() {
+	// The editor first: Monaco's AMD loader has to fetch ~3.8 MB before there
+	// is anything to put source into.
+	await Editor.create("editor", { theme: startTheme });
+
+	Runtime.setWebServiceURL(webServiceURL);
+	// console.js declares the classroom builtins into the Host registry at
+	// parse time; binding them to the interpreter happens once, here. Queued
+	// by a backend that is not up yet, and flushed when it is.
+	Host.installInto(Runtime);
+
+	// Start the interpreter and fetch the source at the same time. Skulpt is
+	// ready immediately; Pyodide is 13 MB, and there is no reason the student
+	// should stare at an empty editor while it arrives.
+	var runtimeReady = Runtime.boot();
+
+	var src = await acquireSource();
+	if (src !== null && src !== undefined && src !== "") {
+		codestring = src;
+		usingPyangelo = checkForPyangelo(codestring);
+		setDisplayMode(usingPyangelo ? "canvas" : display);
+		if (!headless) {
+			Editor.setValue(codestring);
+		}
+	}
+
+	await runtimeReady;
+	if (codestring === "") {
+		return;
+	}
+
+	if (autorun || headless) {
+		// For a compiled payload the source is swapped in by the runtime's
+		// after-compile hook, so the run is kicked off with nothing.
+		runSkulpt(false, compiled ? "" : codestring);
+	}
+})();
+
 // if not in headless mode:
 if (!headless) {
 	// get rid of id= from param string
-	// this is so users don't save to local storage and think the code is actually part of the codestore id in the URL		
-	let newURL = window.location.toString();
-	newURL = newURL.split('?')[0] + "?";
+	// this is so users don't save to local storage and think the code is actually part of the codestore id in the URL
+	//
+	// The values have to be RE-ENCODED. urlParams.forEach hands back decoded
+	// values, and this used to concatenate them into the URL raw - so a single
+	// "<" inside ?code= produced a document URL that broke every subsequent
+	// *relative* subresource load: Monaco's AMD modules and the Pyodide
+	// runtime's js/py/*.py both failed, reporting errors that pointed anywhere
+	// but here. A "#" in the source (i.e. any Python comment) also swallowed
+	// every following parameter into the fragment. URLSearchParams escapes
+	// properly and drops the stray leading "&" the old code emitted.
+	let kept = new URLSearchParams();
 	urlParams.forEach(function(value, key) {
 		if (key != "id" && key !== "undefined") {
-		newURL = newURL + "&" + key + "=" + value;
+			kept.append(key, value);
 		}
 	});
-	window.history.replaceState(null, null, newURL);
+	let query = kept.toString();
+	window.history.replaceState(null, null,
+		window.location.pathname + (query ? "?" + query : "") + window.location.hash);
 }
 // if we are in headless mode, then editor is not active anyway and the ID needs to be in the url for the user to restart via refresh
 

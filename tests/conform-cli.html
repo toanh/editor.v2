@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>RUNNING</title>
+<style>
+  #frames { position: absolute; left: -10000px; top: 0; width: 1000px; height: 700px; }
+  #frames iframe { width: 1000px; height: 700px; border: 0; }
+  body { font-family: monospace; }
+</style>
+</head>
+<body>
+<!--
+  Headless runner for the conformance harness. Same engine as conform.html,
+  no UI. Drive it from a terminal:
+
+    python -m http.server 8000
+    chrome --headless --disable-gpu --virtual-time-budget=600000 --dump-dom \
+      "http://localhost:8000/tests/conform-cli.html?limit=20&mode=record" > out.html
+
+  Query params:
+    mode=record|compare   default record
+    limit=N               first N files only (0 = all)
+    exclude=tag,tag       skip files carrying any of these tags
+    only=tag,tag          keep only files carrying all of these tags
+    all=1                 include manual-only files too
+
+  When it finishes, <title> becomes DONE and #out holds the JSON report.
+  Goldens for a compare run are read from goldens.json beside this file.
+-->
+<pre id="status">running…</pre>
+<pre id="out"></pre>
+<div id="frames"></div>
+
+<script src="manifest.js"></script>
+<script src="conform.js"></script>
+<script>
+(function () {
+  var q = new URLSearchParams(location.search);
+  var mode = q.get("mode") || "record";
+  var limit = parseInt(q.get("limit") || "0", 10);
+  var exclude = (q.get("exclude") || "").split(",").filter(Boolean);
+  var only = (q.get("only") || "").split(",").filter(Boolean);
+  var includeManual = q.get("all") === "1";
+
+  var list = MANIFEST.filter(function (m) {
+    if (!includeManual && !m.auto) return false;
+    if (exclude.some(function (t) { return m.tags.indexOf(t) !== -1; })) return false;
+    if (only.length && !only.every(function (t) { return m.tags.indexOf(t) !== -1; })) return false;
+    return true;
+  });
+  // e.g. with=editor%3Dace to run the corpus against the Ace fallback
+  if (q.get("with")) { Conform.setExtraParams(q.get("with")); }
+  var offset = parseInt(q.get("offset") || "0", 10);
+  if (offset > 0) list = list.slice(offset);
+  if (limit > 0) list = list.slice(0, limit);
+
+  var status = document.getElementById("status");
+
+  function go() {
+    Conform.run(list, mode, function (row, done, total) {
+      status.textContent = done + "/" + total + "  " + row.verdict + "  " + row.path;
+    }).then(function (results) {
+      var tally = {};
+      results.forEach(function (r) { tally[r.verdict] = (tally[r.verdict] || 0) + 1; });
+      var report = {
+        mode: mode,
+        selected: list.length,
+        tally: tally,
+        results: results.map(function (r) {
+          return { path: r.path, verdict: r.verdict, ms: r.ms, status: r.status,
+                   inputsRead: r.inputsRead, note: r.note,
+                   bytes: (r.output || "").length,
+                   head: (r.output || "").slice(0, 300) };
+        })
+      };
+      if (mode === "record") report.goldens = Conform.getGoldens();
+      document.getElementById("out").textContent = JSON.stringify(report, null, 1);
+      status.textContent = "finished";
+      document.title = "DONE";
+    });
+  }
+
+  if (mode === "compare") {
+    fetch("goldens.json").then(function (r) { return r.json(); })
+      .then(function (g) { Conform.setGoldens(g); go(); })
+      .catch(function (e) {
+        document.getElementById("out").textContent =
+          JSON.stringify({ error: "could not load goldens.json: " + e });
+        document.title = "DONE";
+      });
+  } else {
+    go();
+  }
+})();
+</script>
+</body>
+</html>

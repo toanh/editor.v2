@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>RUNNING</title>
+<style>
+  #frame { position: absolute; left: -10000px; top: 0; width: 1000px; height: 700px; border: 0; }
+  body { font-family: monospace; font-size: 12px; }
+</style>
+</head>
+<body>
+<!--
+  Runs ONE drawing program under ONE interpreter and reports what it painted.
+
+    tests/canvas-probe.html?project=demos/snake&runtime=pyodide&frames=30
+    tests/canvas-probe.html?project=turtle/001&runtime=pyodide&target=turtle
+
+  Two targets, because the two canvas APIs finish differently:
+
+    pyangelo  #pyangelo, one canvas. The programs are endless game loops, so
+              the probe autoruns, counts `frames` animation frames and samples
+              whatever is on screen. Ink is anything not pure black.
+
+    turtle    #turtleCanvas, a div holding three stacked canvases (background,
+              paper, cursor). These programs *finish*, and the finished picture
+              is the thing worth comparing - so the probe holds the run back,
+              hooks stopSkulpt, starts it itself and waits for the end. The
+              three layers are composited onto white first; ink is anything not
+              pure white.
+
+  One file per browser process, deliberately. A page that loops over many of
+  them fights --virtual-time-budget: a drawing program keeps requesting
+  animation frames, so Chrome fast-forwards the whole budget doing real work
+  and --dump-dom writes nothing at all. Keeping the page short-lived avoids it.
+
+  tests/compare-canvas.sh drives this over the corpus and diffs the results.
+-->
+<pre id="out">running</pre>
+<iframe id="frame"></iframe>
+
+<script>
+(function () {
+  var q = new URLSearchParams(location.search);
+  var project = q.get("project");
+  // codeurl loads a program that is not part of the curriculum - the turtle
+  // API micro-suite under tests/turtle-api/ - by fetching the source and
+  // handing it to editor.html as ?code=. Those files must not live in
+  // projects/, or they would land in the manifest and the goldens.
+  var codeurl = q.get("codeurl");
+  var runtime = q.get("runtime") || "skulpt";
+  var target = q.get("target") || "pyangelo";
+  var frames = parseInt(q.get("frames") || "30", 10);
+  var timeout = parseInt(q.get("timeout") || "25000", 10);
+  var out = document.getElementById("out");
+
+  function report(o) {
+    o.project = project || codeurl;
+    o.runtime = runtime;
+    out.textContent = JSON.stringify(o);
+    document.title = "DONE";
+  }
+
+  // Ink = pixels that differ from the blank background. Ink alone cannot tell
+  // "filled the canvas yellow" from "filled it blue", and a bgcolor() program
+  // lights every pixel - so summed intensity is reported alongside it, and the
+  // hash catches anything both miss.
+  function measure(data, onWhite, width) {
+    var ink = 0, lum = 0, hash = 5381;
+    // ?detail=1 adds per-row and per-column ink profiles, which localise a
+    // mismatch to a band of the picture without moving images between
+    // processes. Off by default: a thousand numbers per file is a lot of pipe.
+    var rows = q.get("detail") ? [] : null;
+    var cols = rows ? [] : null;
+    for (var i = 0; i < data.length; i += 4) {
+      var lit = onWhite
+        ? (data[i] !== 255 || data[i + 1] !== 255 || data[i + 2] !== 255)
+        : (data[i] || data[i + 1] || data[i + 2]);
+      lum += data[i] + data[i + 1] + data[i + 2];
+      if (lit) {
+        ink++;
+        if (rows) {
+          var n = i / 4;
+          rows[(n / width) | 0] = (rows[(n / width) | 0] || 0) + 1;
+          cols[n % width] = (cols[n % width] || 0) + 1;
+        }
+      }
+      hash = ((hash * 33) ^ (data[i] + data[i + 1] * 3 + data[i + 2] * 7)) >>> 0;
+    }
+    var m = { ink: ink, lum: lum, pixels: data.length / 4, hash: hash };
+    if (rows) {
+      for (var k = 0; k < width; k++) { rows[k] = rows[k] || 0; cols[k] = cols[k] || 0; }
+      m.rows = rows;
+      m.cols = cols;
+    }
+    return m;
+  }
+
+  function samplePyangelo(win) {
+    var c = win.document.getElementById("pyangelo");
+    if (!c) { return { error: "no #pyangelo" }; }
+    var d = c.getContext("2d").getImageData(0, 0, c.width, c.height).data;
+    var m = measure(d, false, c.width);
+    m.w = c.width; m.h = c.height;
+    return m;
+  }
+
+  // The turtle layers are transparent over the div's white background, so they
+  // have to be flattened onto white before the pixels mean anything.
+  function sampleTurtle(win) {
+    var div = win.document.getElementById("turtleCanvas");
+    if (!div) { return { error: "no #turtleCanvas" }; }
+    var layers = div.getElementsByTagName("canvas");
+    // Skulpt creates its layers lazily, so a program that imports turtle and
+    // draws nothing leaves the div empty. That is a blank picture, not an
+    // error - the two runtimes just disagree about when to allocate a canvas.
+    if (!layers.length) { return { ink: 0, pixels: 0, hash: 0, layers: 0 }; }
+    var flat = document.createElement("canvas");
+    flat.width = layers[0].width;
+    flat.height = layers[0].height;
+    var ctx = flat.getContext("2d");
+    ctx.fillStyle = "#fff";
+    ctx.fillRect(0, 0, flat.width, flat.height);
+
+    // Composite by z-index, NOT by DOM order. Skulpt allocates these layers
+    // lazily - the background canvas is created by the first bgcolor() call
+    // and so is appended *last*, after the paper it belongs underneath - and
+    // relies on z-index to sort them out. Flattening in DOM order painted the
+    // background over the drawing and made demos/turtle_demo look like a flat
+    // green rectangle under Skulpt and a picture under Pyodide, which is a
+    // difference in this probe and not in either runtime.
+    var ordered = Array.prototype.slice.call(layers).map(function (c, i) {
+      var z = parseInt(win.getComputedStyle(c).zIndex, 10);
+      return { c: c, z: isNaN(z) ? 0 : z, i: i };
+    }).sort(function (a, b) { return (a.z - b.z) || (a.i - b.i); });
+    for (var i = 0; i < ordered.length; i++) { ctx.drawImage(ordered[i].c, 0, 0); }
+    var m = measure(ctx.getImageData(0, 0, flat.width, flat.height).data, true, flat.width);
+    m.w = flat.width; m.h = flat.height; m.layers = layers.length;
+    // Under ?detail=1, report each layer separately with its stacking. The two
+    // runtimes allocate these in different orders - Skulpt lazily, on first
+    // use; the port eagerly, background first - and stacking is what decides
+    // whether bgcolor() paints under the drawing or over it.
+    if (m.rows) {
+      m.stack = [];
+      for (var j = 0; j < layers.length; j++) {
+        var lc = layers[j];
+        var ld = lc.getContext("2d").getImageData(0, 0, lc.width, lc.height).data;
+        var opaque = 0;
+        for (var k = 3; k < ld.length; k += 4) { if (ld[k]) { opaque++; } }
+        m.stack.push({
+          i: j,
+          zIndex: win.getComputedStyle(lc).zIndex,
+          marginTop: win.getComputedStyle(lc).marginTop,
+          opaque: opaque
+        });
+      }
+    }
+    return m;
+  }
+
+  function sample(win) {
+    var m;
+    try {
+      m = target === "turtle" ? sampleTurtle(win) : samplePyangelo(win);
+    } catch (e) {
+      m = { error: String(e.name || e) };   // a cross-origin image taints the canvas
+    }
+    // The console text as well as the pixels, and attached even to a failure:
+    // "no #turtleCanvas" almost always means the program raised before it drew
+    // anything, and the traceback is sitting right there in the console.
+    try {
+      var c = win.document.getElementById("console");
+      m.text = c ? c.textContent.replace(/\s+$/, "") : "";
+      // Relative fetches inside the editor resolve against baseURI, and
+      // editor.js rewrites the address bar during boot - so when a same-origin
+      // fetch fails without ever reaching the server, this is the thing to look
+      // at first.
+      if (q.get("detail") || m.error) {
+        m.baseURI = win.document.baseURI;
+        m.search = win.location.search;
+        try { m.resolved = new win.URL("js/py/prelude.py?t=1", win.document.baseURI).href; } catch (e3) {}
+      }
+    } catch (e2) {
+      m.text = "";
+    }
+    return m;
+  }
+
+  var frame = document.getElementById("frame");
+  var done = false;
+  setTimeout(function () { if (!done) { done = true; report({ error: "timed out" }); } }, timeout);
+
+  // ?project= prefers localStorage over the network, and ?code= is saved there
+  // on every run - so an earlier probe's source would be replayed. Same origin,
+  // so we can clear the slot ourselves, exactly as conform.js does.
+  try { localStorage.removeItem("__probe__"); } catch (e) {}
+
+  // pyangelo programs never end, so let them autorun. turtle programs do end,
+  // and we need the completion hook installed before the first line executes.
+  // `with=` appends an extra editor parameter, as conform-cli.html does -
+  // e.g. with=editor%3Dace to run the same file against the Ace fallback.
+  var params = "&name=__probe__&nosave=1&nosnap=1&nofs=1&runtime=" + runtime +
+               (q.get("with") ? "&" + q.get("with") : "") +
+               (target === "turtle" ? "&norun=1" : "&autorun=1");
+
+  // Half the turtle corpus is written in the training-wheels dialect
+  // (`repeat 6:`), which is a load-time source rewrite rather than a runtime
+  // feature - so the flag has to be right or the file will not compile. The
+  // test is make-manifest.js's, applied here so the shell driver needs no
+  // per-file knowledge.
+  fetch(codeurl ? "../" + codeurl : "../projects/" + project + ".py")
+    .then(function (r) { return r.ok ? r.text() : ""; })
+    .catch(function () { return ""; })
+    .then(function (src) {
+      if (/^\s*repeat\s+\d/m.test(src)) { params += "&wheels=1"; }
+      if (codeurl) {
+        if (!src) {
+          done = true;
+          return report({ error: "could not fetch " + codeurl });
+        }
+        params = "code=" + encodeURIComponent(src) + params;
+      } else {
+        params = "project=" + encodeURIComponent(project) + params;
+      }
+      frame.src = "../editor.html?" + params;
+    });
+
+  frame.onload = function () {
+    var started = Date.now();
+    (function poll() {
+      if (done) { return; }
+      var w = frame.contentWindow, ready = false;
+      try { ready = w && typeof w.runSkulpt === "function" && w.codestring; } catch (e) {}
+      if (!ready) {
+        if (Date.now() - started > 18000) {
+          done = true;
+          return report({ error: "never loaded" });
+        }
+        return setTimeout(poll, 60);
+      }
+      return target === "turtle" ? runToCompletion(w) : countFrames(w);
+    })();
+  };
+
+  // pyangelo: sample after a fixed number of animation frames.
+  function countFrames(w) {
+    var left = frames, ticked = 0;
+    (function tick() {
+      if (done) { return; }
+      if (left-- <= 0) {
+        done = true;
+        var s = sample(w);
+        s.frames = ticked;
+        try { w.stopEditor(); } catch (e) {}
+        return report(s);
+      }
+      ticked++;
+      w.requestAnimationFrame(tick);
+    })();
+  }
+
+  // turtle: start the program ourselves and sample when it ends. stopSkulpt is
+  // what editor.js calls on the way out under either interpreter, and it is
+  // looked up at call time, so swapping it here is enough.
+  function runToCompletion(w) {
+    var startedRun = Date.now();
+    // ?runs=2 runs the same program twice in the same page and reports both.
+    // That is where a stateful module which has to be re-imported between runs
+    // shows up - pyangelo needed exactly that fix, or the second run drew into
+    // a canvas whose render loop had been torn down.
+    var remaining = parseInt(q.get("runs") || "1", 10);
+    var firstInk = null, firstHash = null;
+    var origStop = w.stopSkulpt;
+    w.stopSkulpt = function () {
+      var r = origStop.apply(this, arguments);
+      if (done) { return r; }
+      var s = sample(w);
+      if (--remaining > 0) {
+        firstInk = s.ink;
+        firstHash = s.hash;
+        // Clear the console the way the Run button does, so the second run
+        // starts from the state a student would actually give it.
+        setTimeout(function () {
+          try { w.clearConsole(); } catch (e) {}
+          try { w.runSkulpt(); } catch (e) {
+            done = true;
+            report({ error: "second run threw: " + String(e && e.message || e) });
+          }
+        }, 50);
+        return r;
+      }
+      done = true;
+      s.ms = Date.now() - startedRun;
+      if (firstInk !== null) { s.firstInk = firstInk; s.firstHash = firstHash; }
+      report(s);
+      return r;
+    };
+    try {
+      w.runSkulpt();
+    } catch (e) {
+      done = true;
+      report({ error: "run threw: " + String(e && e.message || e) });
+    }
+  }
+})();
+</script>
+</body>
+</html>

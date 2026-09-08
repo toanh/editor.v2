@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Conformance harness</title>
+<style>
+  body { font-family: arial, sans-serif; font-size: 10pt; margin: 16px; }
+  h1 { font-size: 14pt; margin: 0 0 4px; }
+  .sub { color: #666; margin: 0 0 14px; }
+  fieldset { border: 1px solid #ccc; margin-bottom: 12px; padding: 10px 12px; }
+  legend { font-weight: bold; }
+  label { margin-right: 14px; white-space: nowrap; }
+  button { padding: 5px 12px; margin-right: 6px; }
+  #progress { margin: 8px 0; font-family: monospace; }
+  #bar { height: 6px; background: #eee; margin: 6px 0 12px; }
+  #barfill { height: 6px; background: #4a90d9; width: 0; }
+  table { border-collapse: collapse; width: 100%; font-size: 9pt; }
+  th, td { border-bottom: 1px solid #eee; padding: 3px 6px; text-align: left;
+           vertical-align: top; }
+  th { background: #f6f6f6; position: sticky; top: 0; }
+  td.v { font-weight: bold; white-space: nowrap; }
+  .pass, .recorded { color: #197a19; }
+  .fail, .error, .timeout { color: #c00; }
+  .new { color: #b8860b; }
+  .tags { color: #888; font-size: 8pt; }
+  .note { color: #555; }
+  tr.row:hover { background: #fbfbe8; cursor: pointer; }
+  #frames { position: fixed; left: -10000px; top: 0; width: 1000px; height: 700px; }
+  #frames iframe { width: 1000px; height: 700px; border: 0; }
+  #detail { position: fixed; right: 0; top: 0; width: 44%; height: 100%;
+            background: #111; color: #ddd; overflow: auto; padding: 10px;
+            white-space: pre-wrap; font-family: monospace; font-size: 9pt;
+            display: none; z-index: 50; }
+  #detail .close { float: right; color: #fff; cursor: pointer; font-weight: bold; }
+  .counts span { margin-right: 12px; font-weight: bold; }
+</style>
+</head>
+<body>
+
+<h1>Conformance harness</h1>
+<p class="sub">
+  Runs each curriculum file in a real <code>editor.html</code> iframe and captures the console.
+  <b>Record</b> against the current runtime to create the baseline, then <b>Compare</b> after any change.
+</p>
+
+<fieldset>
+  <legend>Corpus</legend>
+  <div id="filters"></div>
+  <p>
+    <label><input type="checkbox" id="autoOnly" checked> automatable only
+      (excludes canvas / network / hardware / speech)</label>
+    <label>limit <input type="number" id="limit" value="0" min="0" style="width:70px"> (0 = all)</label>
+  </p>
+  <p id="selCount" class="sub"></p>
+</fieldset>
+
+<fieldset>
+  <legend>Run</legend>
+  <button id="record">Record goldens</button>
+  <button id="compare">Compare against goldens</button>
+  <button id="cancel" disabled>Cancel</button>
+  <span style="margin-left:18px">
+    <button id="download" disabled>Download goldens.json</button>
+    <label>load goldens: <input type="file" id="loadGoldens" accept=".json"></label>
+  </span>
+</fieldset>
+
+<div id="bar"><div id="barfill"></div></div>
+<div id="progress">idle</div>
+<p class="counts" id="counts"></p>
+
+<table>
+  <thead><tr><th style="width:34%">file</th><th style="width:8%">verdict</th>
+             <th style="width:7%">ms</th><th>note</th></tr></thead>
+  <tbody id="rows"></tbody>
+</table>
+
+<div id="frames"></div>
+<div id="detail"><span class="close" onclick="document.getElementById('detail').style.display='none'">close ✕</span><span id="detailBody"></span></div>
+
+<script src="manifest.js"></script>
+<script src="conform.js"></script>
+<script>
+(function () {
+  var ALL_TAGS = {};
+  MANIFEST.forEach(function (m) { m.tags.forEach(function (t) { ALL_TAGS[t] = (ALL_TAGS[t]||0)+1; }); });
+
+  var filters = document.getElementById("filters");
+  Object.keys(ALL_TAGS).sort().forEach(function (t) {
+    var l = document.createElement("label");
+    l.innerHTML = '<input type="checkbox" class="tagf" value="' + t + '"> exclude ' +
+                  t + ' <span class="tags">(' + ALL_TAGS[t] + ')</span>';
+    filters.appendChild(l);
+  });
+
+  function selection() {
+    var excluded = Array.prototype.filter.call(document.querySelectorAll(".tagf"), function (c) { return c.checked; })
+                        .map(function (c) { return c.value; });
+    var autoOnly = document.getElementById("autoOnly").checked;
+    var list = MANIFEST.filter(function (m) {
+      if (autoOnly && !m.auto) return false;
+      return !m.tags.some(function (t) { return excluded.indexOf(t) !== -1; });
+    });
+    var lim = parseInt(document.getElementById("limit").value, 10) || 0;
+    return lim > 0 ? list.slice(0, lim) : list;
+  }
+
+  function refreshCount() {
+    document.getElementById("selCount").textContent =
+      selection().length + " of " + MANIFEST.length + " files selected";
+  }
+  document.getElementById("filters").addEventListener("change", refreshCount);
+  document.getElementById("autoOnly").addEventListener("change", refreshCount);
+  document.getElementById("limit").addEventListener("input", refreshCount);
+  refreshCount();
+
+  var tally = {};
+  function addRow(row, done, total) {
+    tally[row.verdict] = (tally[row.verdict] || 0) + 1;
+    var tr = document.createElement("tr");
+    tr.className = "row";
+    tr.innerHTML =
+      '<td>' + row.path + ' <span class="tags">' + row.tags.join(" ") + '</span></td>' +
+      '<td class="v ' + row.verdict + '">' + row.verdict + '</td>' +
+      '<td>' + row.ms + '</td>' +
+      '<td class="note">' + (row.note || "") + '</td>';
+    tr.onclick = function () {
+      document.getElementById("detailBody").textContent =
+        row.path + "\n" + "-".repeat(row.path.length) + "\n\n" + (row.output || "(no output)");
+      document.getElementById("detail").style.display = "block";
+    };
+    document.getElementById("rows").appendChild(tr);
+
+    document.getElementById("progress").textContent =
+      done + " / " + total + "   " + row.path;
+    document.getElementById("barfill").style.width = (100 * done / total) + "%";
+    document.getElementById("counts").innerHTML =
+      Object.keys(tally).sort().map(function (k) {
+        return '<span class="' + k + '">' + k + ": " + tally[k] + "</span>";
+      }).join("");
+  }
+
+  function start(mode) {
+    document.getElementById("rows").innerHTML = "";
+    tally = {};
+    var list = selection();
+    ["record", "compare"].forEach(function (id) { document.getElementById(id).disabled = true; });
+    document.getElementById("cancel").disabled = false;
+
+    Conform.run(list, mode, addRow).then(function () {
+      document.getElementById("progress").textContent = "done - " + list.length + " files";
+      ["record", "compare"].forEach(function (id) { document.getElementById(id).disabled = false; });
+      document.getElementById("cancel").disabled = true;
+      document.getElementById("download").disabled = false;
+    });
+  }
+
+  document.getElementById("record").onclick  = function () { start("record"); };
+  document.getElementById("compare").onclick = function () { start("compare"); };
+  document.getElementById("cancel").onclick  = function () { Conform.cancel(); };
+
+  document.getElementById("download").onclick = function () {
+    var blob = new Blob([JSON.stringify(Conform.getGoldens(), null, 1)], { type: "application/json" });
+    var a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "goldens.json";
+    a.click();
+  };
+
+  document.getElementById("loadGoldens").onchange = function (e) {
+    var f = e.target.files[0];
+    if (!f) return;
+    f.text().then(function (t) {
+      Conform.setGoldens(JSON.parse(t));
+      document.getElementById("progress").textContent =
+        "loaded " + Object.keys(Conform.getGoldens()).length + " goldens";
+    });
+  };
+})();
+</script>
+</body>
+</html>

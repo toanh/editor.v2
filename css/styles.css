@@ -15,6 +15,38 @@ body {
 	//color:#fff;
 	padding:10px 10px 5px;
 	overscroll-behavior-x: none;
+	/* Monaco absolutely positions its own children and would otherwise
+	   escape this padding/border box. It mounts into #monacoMount, an inner
+	   div sized to this element's content box, so the frame stays here. */
+	overflow: hidden;
+}
+#monacoMount {
+	width: 100%;
+	height: 100%;
+}
+/* Current line while step-debugging, painted by Editor.setStepLine().
+   Replaces the old approach of injecting rules into the ace-monokai
+   stylesheet at runtime, which never applied in the light theme. */
+/* Monaco: a whole-line decoration, painted behind the text. */
+.monaco-editor .step-line {
+	background: rgba(32, 128, 32, 0.55);
+}
+.monaco-editor.vs .step-line {
+	background: #b6e7b6;
+}
+/* Ace (?editor=ace): a fullLine marker, which has to be positioned. */
+.ace_marker-layer .step-line {
+	position: absolute;
+	z-index: 4;
+	background: #208020;
+}
+.ace-eclipse .ace_marker-layer .step-line {
+	background: #b6e7b6;
+}
+/* TODO: size this to the longest completion instead of a fixed width:
+   https://stackoverflow.com/questions/47708044/changing-the-width-of-autocompleter */
+.ace_editor.ace_autocomplete {
+	width: 420px !important;
 }
 #consoleWrapper {
 	border: 10 px solid #d3d3d3;

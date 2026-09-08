@@ -1,31 +1,35 @@
-Sk.builtins.RESET = new Sk.builtin.str("\u001b[ 0;2;0;0;0 m");
+// Console text styling, as Python builtins. These are the app's own
+// space-padded pseudo-ANSI escapes, parsed by outputf() below.
+// Declared here, bound to the interpreter by Host.installInto() at boot.
 
-Sk.builtins.RED = new Sk.builtin.str("\u001b[ 38;2;255;0;0 m");
-Sk.builtins.BLACK = new Sk.builtin.str("\u001b[ 38;2;0;0;0 m");
-Sk.builtins.WHITE = new Sk.builtin.str("\u001b[ 38;2;255;255;255 m");
-Sk.builtins.RED = new Sk.builtin.str("\u001b[ 38;2;255;0;0 m");
-Sk.builtins.GREEN = new Sk.builtin.str("\u001b[ 38;2;0;255;0 m");
-Sk.builtins.BLUE = new Sk.builtin.str("\u001b[ 38;2;0;0;255 m");
-Sk.builtins.CYAN = new Sk.builtin.str("\u001b[ 38;2;0;255;255 m");
-Sk.builtins.YELLOW = new Sk.builtin.str("\u001b[ 38;2;255;255;0 m");
-Sk.builtins.MAGENTA = new Sk.builtin.str("\u001b[ 38;2;255;0;255 m");
-Sk.builtins.ORANGE = new Sk.builtin.str("\u001b[ 38;2;255;165;0 m");
-Sk.builtins.PURPLE = new Sk.builtin.str("\u001b[ 38;2;127;0;255 m");
+Host.constant("RESET", "\u001b[ 0;2;0;0;0 m");
+
+Host.constant("RED", "\u001b[ 38;2;255;0;0 m");
+Host.constant("BLACK", "\u001b[ 38;2;0;0;0 m");
+Host.constant("WHITE", "\u001b[ 38;2;255;255;255 m");
+Host.constant("RED", "\u001b[ 38;2;255;0;0 m");
+Host.constant("GREEN", "\u001b[ 38;2;0;255;0 m");
+Host.constant("BLUE", "\u001b[ 38;2;0;0;255 m");
+Host.constant("CYAN", "\u001b[ 38;2;0;255;255 m");
+Host.constant("YELLOW", "\u001b[ 38;2;255;255;0 m");
+Host.constant("MAGENTA", "\u001b[ 38;2;255;0;255 m");
+Host.constant("ORANGE", "\u001b[ 38;2;255;165;0 m");
+Host.constant("PURPLE", "\u001b[ 38;2;127;0;255 m");
     
-Sk.builtins.HL_BLACK = new Sk.builtin.str("\u001b[ 48;2;0;0;0 m");
-Sk.builtins.HL_WHITE = new Sk.builtin.str("\u001b[ 48;2;255;255;255 m");
-Sk.builtins.HL_RED = new Sk.builtin.str("\u001b[ 48;2;255;0;0 m");
-Sk.builtins.HL_GREEN = new Sk.builtin.str("\u001b[ 48;2;0;255;0 m");
-Sk.builtins.HL_BLUE = new Sk.builtin.str("\u001b[ 48;2;0;0;255 m");    
-Sk.builtins.HL_CYAN = new Sk.builtin.str("\u001b[ 48;2;0;255;255 m");
-Sk.builtins.HL_YELLOW = new Sk.builtin.str("\u001b[ 48;2;255;255;0 m");
-Sk.builtins.HL_MAGENTA = new Sk.builtin.str("\u001b[ 48;2;255;0;255 m");
-Sk.builtins.HL_ORANGE = new Sk.builtin.str("\u001b[ 48;2;255;165;0 m");
-Sk.builtins.HL_PURPLE = new Sk.builtin.str("\u001b[ 48;2;127;0;255 m");
+Host.constant("HL_BLACK", "\u001b[ 48;2;0;0;0 m");
+Host.constant("HL_WHITE", "\u001b[ 48;2;255;255;255 m");
+Host.constant("HL_RED", "\u001b[ 48;2;255;0;0 m");
+Host.constant("HL_GREEN", "\u001b[ 48;2;0;255;0 m");
+Host.constant("HL_BLUE", "\u001b[ 48;2;0;0;255 m");
+Host.constant("HL_CYAN", "\u001b[ 48;2;0;255;255 m");
+Host.constant("HL_YELLOW", "\u001b[ 48;2;255;255;0 m");
+Host.constant("HL_MAGENTA", "\u001b[ 48;2;255;0;255 m");
+Host.constant("HL_ORANGE", "\u001b[ 48;2;255;165;0 m");
+Host.constant("HL_PURPLE", "\u001b[ 48;2;127;0;255 m");
     
-Sk.builtins.BOLD = new Sk.builtin.str("\u001b[ 1;2;0;0;0 m");    
-Sk.builtins.ITALICS = new Sk.builtin.str("\u001b[ 3;2;0;0;0 m");    
-Sk.builtins.UNDERLINE = new Sk.builtin.str("\u001b[ 4;2;0;0;0 m");    
+Host.constant("BOLD", "\u001b[ 1;2;0;0;0 m");
+Host.constant("ITALICS", "\u001b[ 3;2;0;0;0 m");
+Host.constant("UNDERLINE", "\u001b[ 4;2;0;0;0 m");
 
 function outputf(n) {
     var text = "";
@@ -460,7 +464,7 @@ function setupIFrame(url, width, height, x, y) {
     return susp;            
 }
 
-Sk.builtin.showGoogleVideo = function showGoogleVideo(url, width, height, x, y) {
+function showGoogleVideo(url, width, height, x, y) {
     const _url = Sk.ffi.remapToJs(url);
     const _width = Sk.ffi.remapToJs(width);
     const _height = Sk.ffi.remapToJs(height);
@@ -477,23 +481,14 @@ Sk.builtin.showGoogleVideo = function showGoogleVideo(url, width, height, x, y) 
        
 }
 
-Sk.builtins["showGoogleVideo"] = new Sk.builtin.sk_method(
-    {
-        $meth: Sk.builtin.showGoogleVideo,
-        $name: "showGoogleVideo",
-        $flags: {
-            NamedArgs: [null, "width", "height", "x", "y"],
-            Defaults: [600, 480, -1, -1],
-        },
-        $textsig: "($module, size /)",
-        $doc:
-            "Displays a google drive video in an iframe",
-    },
-    null,
-    "builtins"
-);
+Host.method("showGoogleVideo", showGoogleVideo, {
+    namedArgs: [null, "width", "height", "x", "y"],
+    defaults: [600, 480, -1, -1],
+    textsig: "($module, size /)",
+    doc: "Displays a google drive video in an iframe"
+});
 
-Sk.builtin.showIFrame = function showIFrame(url, width, height, x, y) {
+function showIFrame(url, width, height, x, y) {
     const _url = Sk.ffi.remapToJs(url);
     const _width = Sk.ffi.remapToJs(width);
     const _height = Sk.ffi.remapToJs(height);
@@ -504,21 +499,12 @@ Sk.builtin.showIFrame = function showIFrame(url, width, height, x, y) {
        
 }
 
-Sk.builtins["showIFrame"] = new Sk.builtin.sk_method(
-    {
-        $meth: Sk.builtin.showIFrame,
-        $name: "showIFrame",
-        $flags: {
-            NamedArgs: [null, "width", "height", "x", "y"],
-            Defaults: [600, 480, -1, -1],
-        },
-        $textsig: "($module, url, width, height, x, y /)",
-        $doc:
-            "Displays a URL in an iframe",
-    },
-    null,
-    "builtins"
-);
+Host.method("showIFrame", showIFrame, {
+    namedArgs: [null, "width", "height", "x", "y"],
+    defaults: [600, 480, -1, -1],
+    textsig: "($module, url, width, height, x, y /)",
+    doc: "Displays a URL in an iframe"
+});
 
 /////////////////////// UI functions /////////////////////////////
 
@@ -780,7 +766,7 @@ function destroyWatchTableFrame() {
 
 ///////////////////////// URL param functions /////////////////////////
 
-Sk.builtin.getURLParam = function getURLParam(param) {
+function getURLParam(param) {
     Sk.builtin.pyCheckArgsLen("getURLParam", arguments.length, 1, 1);
     Sk.builtin.pyCheckType("param","str",Sk.builtin.checkString(param));
     
@@ -791,21 +777,12 @@ Sk.builtin.getURLParam = function getURLParam(param) {
     return new Sk.builtin.str(data);
 };
 
-Sk.builtins["getURLParam"] = new Sk.builtin.sk_method(
-    {
-        $meth: Sk.builtin.getURLParam,
-        $name: "getURLParam",
-        $flags: {
-            NamedArgs: [null],
-            Defaults: [14],
-        },
-        $textsig: "($module, size /)",
-        $doc:
-            "Returns the value of the URL param, None if it doesn't exist.",
-    },
-    null,
-    "builtins"
-);
+Host.method("getURLParam", getURLParam, {
+    namedArgs: [null],
+    defaults: [14],
+    textsig: "($module, size /)",
+    doc: "Returns the value of the URL param, None if it doesn't exist."
+});
 
 
 ///////////////////////// canvas (pyangelo) functions//////////////////////////
@@ -815,7 +792,7 @@ let pyangeloFrameParent1 = null;
 let pyangeloFrameParent2 = null;
 
 // hijacking setCanvasSize to pop out new jsFrame
-Sk.builtin.setCanvasSize = function setCanvasSize(w, h, yAxisMode) {
+function setCanvasSize(w, h, yAxisMode) {
     Sk.builtin.pyCheckArgsLen("setCanvasSize", arguments.length, 2, 3);
     Sk.builtin.pyCheckType("w", "integer", Sk.builtin.checkInt(w));
     Sk.builtin.pyCheckType("h", "integer", Sk.builtin.checkInt(h));
@@ -829,45 +806,27 @@ Sk.builtin.setCanvasSize = function setCanvasSize(w, h, yAxisMode) {
     Sk.builtin._setCanvasSize(w, h, yAxisMode);
 };
 
-Sk.builtins["setCanvasSize"] = new Sk.builtin.sk_method(
-    {
-        $meth: Sk.builtin.setCanvasSize,
-        $name: "setCanvasSize",
-        $flags: {
-            NamedArgs: [null, null, "yAxisMode"],
-            Defaults: [1],
-        },
-        $textsig: "($module, w, h, yAxisMode /)",
-        $doc:
-            "Sets the size of the canvas that all drawings are written to. The first parameter specifies the width in pixels and the second the height. The thrid parameter specifies the direction of the y axis. The constant CARTESIAN can be used to specify the y axis acts like a regular cartesian plane in maths, and JAVASCRIPT can be used to specify a traditional javascript y-axis that moves down the screen. The default value for yAxisMode is CARTESIAN.",
-    },
-    null,
-    "builtins"
-);
+Host.method("setCanvasSize", setCanvasSize, {
+    namedArgs: [null, null, "yAxisMode"],
+    defaults: [1],
+    textsig: "($module, w, h, yAxisMode /)",
+    doc: "Sets the size of the canvas that all drawings are written to. The first parameter specifies the width in pixels and the second the height. The thrid parameter specifies the direction of the y axis. The constant CARTESIAN can be used to specify the y axis acts like a regular cartesian plane in maths, and JAVASCRIPT can be used to specify a traditional javascript y-axis that moves down the screen. The default value for yAxisMode is CARTESIAN."
+});
 
 // hijacking setCanvasSize to pop out new jsFrame
-Sk.builtin.setConsoleFontSize = function setConsoleFontSize(size) {
+function setConsoleFontSize(size) {
     Sk.builtin.pyCheckArgsLen("setConsoleFontSize", arguments.length, 1, 1);
     Sk.builtin.pyCheckType("size", "integer", Sk.builtin.checkInt(size));
 
     fontSize = size + 'pt';
 };
 
-Sk.builtins["setConsoleFontSize"] = new Sk.builtin.sk_method(
-    {
-        $meth: Sk.builtin.setConsoleFontSize,
-        $name: "setConsoleFontSize",
-        $flags: {
-            NamedArgs: [null],
-            Defaults: [14],
-        },
-        $textsig: "($module, size /)",
-        $doc:
-            "Sets the size font in the console window in 'pts'.",
-    },
-    null,
-    "builtins"
-);
+Host.method("setConsoleFontSize", setConsoleFontSize, {
+    namedArgs: [null],
+    defaults: [14],
+    textsig: "($module, size /)",
+    doc: "Sets the size font in the console window in 'pts'."
+});
 
 async function createPyangeloFrame(w, h) {
     if (pyangeloFrame !== null) {
@@ -1038,7 +997,8 @@ async function loop() {
     webCamAnimationID = window.requestAnimationFrame(loop);
 }
 
-Sk.builtins.saveWebCamImage = function(name) {
+Host.raw("saveWebCamImage", saveWebCamImage);
+function saveWebCamImage(name) {
     if (webcam !== null) {
         var data = webcam.canvas.toDataURL('image/png').replace("image/png", "image/octet-stream");
         let downloadLink = document.createElement("a");        
@@ -1051,7 +1011,8 @@ Sk.builtins.saveWebCamImage = function(name) {
     }    
 }
 
-Sk.builtins.getWebCamImage = function() {
+Host.raw("getWebCamImage", getWebCamImage);
+function getWebCamImage() {
     let data = "";
     if (webcam !== null) {
         data = webcam.canvas.toDataURL('image/png');
@@ -1059,24 +1020,25 @@ Sk.builtins.getWebCamImage = function() {
     return new Sk.builtin.str(data);
 }
 ///////////////////////// exported helper functions //////////////////////////
-Sk.builtins.setWebCamCallback = function(f) {
+Host.raw("setWebCamCallback", setWebCamCallback);
+function setWebCamCallback(f) {
     webCamCallback = f;
 }
 
-Sk.builtins.clear = function() {
+Host.raw("clear", clear);
+function clear() {
     clearConsole();
 }
 
-Sk.builtins.showSpinner = function() {
-    showSpinner();
-}
-
-Sk.builtins.hideSpinner = function() {
-    hideSpinner();
-}
+// These two were passthrough wrappers around the DOM helpers of the same name
+// further up this file. Expose those directly - a wrapper function declared
+// here would shadow the helper and recurse forever.
+Host.raw("showSpinner", showSpinner);
+Host.raw("hideSpinner", hideSpinner);
 
 // FIXME: need to preserve CSS stylings of the div
-Sk.builtins.print_screen = function() {
+Host.raw("print_screen", print_screen);
+function print_screen() {
     var divContents = document.getElementById("consoleWrapper").innerHTML;
     var a = window.open('', '', 'height=500, width=500');
     a.document.write('<html>');
@@ -1087,13 +1049,14 @@ Sk.builtins.print_screen = function() {
     a.print();
 }
 
-Sk.builtins.showTurtle = function() {
+Host.raw("showTurtle", showTurtle);
+function showTurtle() {
     createTurtleCanvas();
 }
 
 //////////////////////////// input number ////////////////////////////////
 
-Sk.builtin.inputnumber = function inputnumber(prompt) {
+function inputnumber(prompt) {
     var lprompt = prompt ? prompt : "";
 
     return Sk.misceval.chain(Sk.importModule("sys", false, true), function (sys) {
@@ -1113,24 +1076,16 @@ Sk.builtin.inputnumber = function inputnumber(prompt) {
     });
 };
 
-Sk.builtins["inputnumber"] = new Sk.builtin.sk_method(
-    {
-        $meth: Sk.builtin.inputnumber,
-        $name: "inputnumber",
-        $textsig: "($module, prompt /)",
-        $doc:
-            "Prompts for user to type in a number",
-    },
-    null,
-    "builtins"
-);
+Host.method("inputnumber", inputnumber, {
+    textsig: "($module, prompt /)",
+    doc: "Prompts for user to type in a number"
+});
 // synonymns
-Sk.builtins["input_number"] = Sk.builtins["inputnumber"]
-Sk.builtins["inputNumber"] = Sk.builtins["inputnumber"]
-Sk.builtins["inputnum"] = Sk.builtins["inputnumber"]
-Sk.builtins["input_num"] = Sk.builtins["inputnumber"]
-Sk.builtins["inputNum"] = Sk.builtins["inputnumber"]
-
+Host.alias("input_number", "inputnumber");
+Host.alias("inputNumber", "inputnumber");
+Host.alias("inputnum", "inputnumber");
+Host.alias("input_num", "inputnumber");
+Host.alias("inputNum", "inputnumber");
 //////////////////////////// test phillips hue light API //////////////////////////////
 var g_hueBridgeIP = "192.168.1.100";
 var g_useHTTPS = true;
@@ -1175,7 +1130,8 @@ function stopAllHue() {
     hueCommands = [];        
 }
 
-Sk.builtins.executeHueCommands = function executeHueCommands(loopTimes = 1) {
+Host.raw("executeHueCommands", executeHueCommands);
+function executeHueCommands(loopTimes = 1) {
     let loops = Sk.ffi.remapToJs(loopTimes);
     let commandIndex = 0;
     hueTimer = 0;
@@ -1211,9 +1167,9 @@ Sk.builtins.executeHueCommands = function executeHueCommands(loopTimes = 1) {
     }, hueCommandInterval);    
 }
 // synonymn
-Sk.builtins["runHueCommands"] = Sk.builtins["executeHueCommands"]
-
-Sk.builtins.queueHueCommand = function queueHueCommand(time, light, on = -1, bright = -1, colourx = -1, coloury = -1) {
+Host.alias("runHueCommands", "executeHueCommands");
+Host.raw("queueHueCommand", queueHueCommand);
+function queueHueCommand(time, light, on = -1, bright = -1, colourx = -1, coloury = -1) {
     let t = Sk.ffi.remapToJs(time);
     let l = Sk.ffi.remapToJs(light);
     if (on !== -1) {
@@ -1231,9 +1187,8 @@ Sk.builtins.queueHueCommand = function queueHueCommand(time, light, on = -1, bri
     }
 }
 // synonymn
-Sk.builtins["setHueCommand"] = Sk.builtins["queueHueCommand"]
-
-Sk.builtin.setHueBridgeIP = function setHueBridgeIP(IP, user, hueUserName, useHttps) {
+Host.alias("setHueCommand", "queueHueCommand");
+function setHueBridgeIP(IP, user, hueUserName, useHttps) {
     if (IP === null) {
         throw new Error("Must supply an IP address for the hue bridge.");
     }
@@ -1328,28 +1283,19 @@ Sk.builtin.setHueBridgeIP = function setHueBridgeIP(IP, user, hueUserName, useHt
     return susp;        
 }
 
-Sk.builtins["setHueBridgeIP"] = new Sk.builtin.sk_method(
-    {
-        $meth: Sk.builtin.setHueBridgeIP,
-        $name: "setHueBridgeIP",
-        $flags: {
-            NamedArgs: ["IP", "user", "hueUserName", "useHttps"],
-            Defaults: [null, null, "3Lq6V7ZuY7pxl5vbivXanTQqe1XDllV8lHFEOhhP", true],
-        },
-        $textsig: "($module, IP, user, hueUserName, useHttps /)",
-        $doc:
-            "Sets hue bridge IP and the hue bridge username",
-    },
-    null,
-    "builtins"
-);
+Host.method("setHueBridgeIP", setHueBridgeIP, {
+    namedArgs: ["IP", "user", "hueUserName", "useHttps"],
+    defaults: [null, null, "3Lq6V7ZuY7pxl5vbivXanTQqe1XDllV8lHFEOhhP", true],
+    textsig: "($module, IP, user, hueUserName, useHttps /)",
+    doc: "Sets hue bridge IP and the hue bridge username"
+});
 
 function getHueBridgeURL() {
     return `${g_useHTTPS ? "https" : "http"}://${g_hueBridgeIP}`;
 }
 
 
-Sk.builtin.setLight = function setLight(light, on, bright, x, y) {
+function setLight(light, on, bright, x, y) {
     if (light === null) {
         return;
     }
@@ -1390,24 +1336,16 @@ Sk.builtin.setLight = function setLight(light, on, bright, x, y) {
     });
 }
 
-Sk.builtins["setLight"] = new Sk.builtin.sk_method(
-    {
-        $meth: Sk.builtin.setLight,
-        $name: "setLight",
-        $flags: {
-            NamedArgs: ["light", "on", "bright", "x", "y"],
-            Defaults: [null, null, -1, -1, -1],
-        },
-        $textsig: "($module, light, on, bright, x, y /)",
-        $doc:
-            "Sets the Hue light properties",
-    },
-    null,
-    "builtins"
-);
+Host.method("setLight", setLight, {
+    namedArgs: ["light", "on", "bright", "x", "y"],
+    defaults: [null, null, -1, -1, -1],
+    textsig: "($module, light, on, bright, x, y /)",
+    doc: "Sets the Hue light properties"
+});
 
 
-Sk.builtins.huelight = function huelight(light, on) {
+Host.raw("huelight", huelight);
+function huelight(light, on) {
     const username = "3Lq6V7ZuY7pxl5vbivXanTQqe1XDllV8lHFEOhhP"; // obtained by pressing button + POST /api
 
     const lightOn = Sk.ffi.remapToJs(on);
@@ -1424,7 +1362,8 @@ Sk.builtins.huelight = function huelight(light, on) {
     .catch(err => console.error("Request failed:", err));
 }
 
-Sk.builtins.huebright = function(light, brightness) {
+Host.raw("huebright", huebright);
+function huebright(light, brightness) {
     const username = "3Lq6V7ZuY7pxl5vbivXanTQqe1XDllV8lHFEOhhP"; // obtained by pressing button + POST /api
 
     const bri = Sk.ffi.remapToJs(brightness);
@@ -1441,7 +1380,8 @@ Sk.builtins.huebright = function(light, brightness) {
     .catch(err => console.error("Request failed:", err));
 }
 
-Sk.builtins.huecolour = function(light, x, y) {
+Host.raw("huecolour", huecolour);
+function huecolour(light, x, y) {
     const username = "3Lq6V7ZuY7pxl5vbivXanTQqe1XDllV8lHFEOhhP"; // obtained by pressing button + POST /api
 
     const lightx = Sk.ffi.remapToJs(x);
@@ -1462,7 +1402,8 @@ Sk.builtins.huecolour = function(light, x, y) {
     .catch(err => console.error("Request failed:", err));
 }
 
-Sk.builtins.getlight = function(light) {
+Host.raw("getlight", getlight);
+function getlight(light) {
     // Only works in permissive environments (e.g., file:// or localhost with HTTP)
     const bridgeIP = "192.168.0.17"; // your bridge IP
     const username = "3Lq6V7ZuY7pxl5vbivXanTQqe1XDllV8lHFEOhhP"; // obtained by pressing button + POST /api
@@ -1498,7 +1439,8 @@ Sk.builtins.getlight = function(light) {
     return susp;    
 }
 
-Sk.builtins.getButton = function(button) {
+Host.raw("getButton", getButton);
+function getButton(button) {
     const username = "3Lq6V7ZuY7pxl5vbivXanTQqe1XDllV8lHFEOhhP"; // obtained by pressing button + POST /api
 
 
@@ -1532,7 +1474,8 @@ Sk.builtins.getButton = function(button) {
     return susp;    
 }
 
-Sk.builtins.waitForSmartButtonClick = function(button) {
+Host.raw("waitForSmartButtonClick", waitForSmartButtonClick);
+function waitForSmartButtonClick(button) {
     const username = "3Lq6V7ZuY7pxl5vbivXanTQqe1XDllV8lHFEOhhP"; // obtained by pressing button + POST /api
     const pollDelay = 800;
 

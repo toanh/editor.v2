@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>RUNNING</title>
+<style>
+  body { font-family: monospace; font-size: 12px; margin: 1em; }
+  .ok { color: #2a7; }
+  .bad { color: #c22; font-weight: bold; }
+  pre { margin: 0 0 0 2em; white-space: pre-wrap; }
+  h2 { font-size: 13px; margin: 1.2em 0 0.3em; }
+</style>
+</head>
+<body>
+<!--
+  Unit tests for js/pygmi.js - the source-to-source passes that run before the
+  interpreter ever sees the code.
+
+    http://localhost:8731/tests/pygmi.html
+
+  These are the only completely interpreter-independent part of the pipeline
+  (string in, string out), and until this file existed they had no coverage at
+  all: every one of the six ?wheels=1 curriculum files is a turtle file, so all
+  six carry the blocking `canvas` tag and none of them reach the conformance
+  corpus. A `pass1 is not defined` ReferenceError consequently broke every
+  wheels program in the Pyodide build with a green suite.
+
+  Two properties matter beyond the output text:
+
+    * every pass must be LINE-PRESERVING. The step debugger highlights lines in
+      the editor and formatError reports <stdin>.py line numbers, so a pass that
+      adds or removes a line silently mis-attributes both. Checked for each case.
+    * the passes must not leak state between calls. They used to share implicit
+      globals; running each case twice, interleaved with another pass, would
+      have caught that.
+
+  Headless: chrome --headless --dump-dom .../tests/pygmi.html - title becomes
+  DONE, #out holds a JSON summary.
+-->
+<pre id="out">running</pre>
+<div id="report"></div>
+
+<script src="../js/lex.js"></script>
+<script src="../js/lexpy.js"></script>
+<script src="../js/pygmi.js"></script>
+<script>
+(function () {
+  var cases = [];
+
+  function t(group, name, fn, input, expected) {
+    cases.push({ group: group, name: name, fn: fn, input: input, expected: expected });
+  }
+
+  // --- stripPeriodFromGoto: the Skulpt spelling ---------------------------
+  t("stripPeriodFromGoto", "dotted label and goto", stripPeriodFromGoto,
+    "label .top\nprint(1)\ngoto .top\n",
+    "label top\nprint(1)\ngoto top\n");
+  t("stripPeriodFromGoto", "bare spelling is left alone", stripPeriodFromGoto,
+    "label top\ngoto top\n",
+    "label top\ngoto top\n");
+  t("stripPeriodFromGoto", "indented, as in demos/escape.py", stripPeriodFromGoto,
+    "if x:\n    goto .done\n",
+    "if x:\n    goto done\n");
+
+  // --- attributiseGotoLabels: the CPython spelling ------------------------
+  t("attributiseGotoLabels", "dotted becomes an attribute access", attributiseGotoLabels,
+    "label .top\ngoto .top\n",
+    "label.top\ngoto.top\n");
+  t("attributiseGotoLabels", "bare becomes an attribute access too", attributiseGotoLabels,
+    "label top\ngoto top\n",
+    "label.top\ngoto.top\n");
+  t("attributiseGotoLabels", "indentation is kept", attributiseGotoLabels,
+    "if x:\n    goto .done\n",
+    "if x:\n    goto.done\n");
+  t("attributiseGotoLabels", "a variable called label is not touched", attributiseGotoLabels,
+    "label = 3\nprint(label)\n",
+    "label = 3\nprint(label)\n");
+  // demos/snake.py ends on `goto .here` with no trailing newline.
+  t("attributiseGotoLabels", "last line, no trailing newline", attributiseGotoLabels,
+    "print(1)\ngoto .here",
+    "print(1)\ngoto.here");
+
+  // --- pygmify: the beginner dialect --------------------------------------
+  // `repeat N:` is the only one of these the curriculum actually uses; the
+  // rest are supported by the dialect and exercised nowhere else.
+  t("pygmify", "repeat N: (the only form in the corpus)", pygmify,
+    "repeat 6:\n    forward(50)\n",
+    "for _ in range(6):\n    forward(50)\n");
+  t("pygmify", "repeat N times:", pygmify,
+    "repeat 4 times:\n    print(1)\n",
+    "for _ in range(4 ):\n    print(1)\n");
+  t("pygmify", "nested repeat keeps both indents", pygmify,
+    "repeat 20:\n    repeat 3:\n        forward(50)\n",
+    "for _ in range(20):\n    for _ in range(3):\n        forward(50)\n");
+  t("pygmify", "repeat i = 1 to N", pygmify,
+    "repeat i = 1 to 10:\n    print(i)\n",
+    "for i in range(1, 10+ 1):\n    print(i)\n");
+  t("pygmify", "forever becomes while True", pygmify,
+    "forever:\n    print(1)\n",
+    "while True:\n    print(1)\n");
+  t("pygmify", "until becomes while not", pygmify,
+    "until done:\n    print(1)\n",
+    "while not done:\n    print(1)\n");
+  t("pygmify", "single = in a condition is doubled", pygmify,
+    "if x = 3:\n    print(1)\n",
+    "if x == 3:\n    print(1)\n");
+  t("pygmify", "an existing == is left alone", pygmify,
+    "if x == 3:\n    print(1)\n",
+    "if x == 3:\n    print(1)\n");
+  t("pygmify", ">= and != survive", pygmify,
+    "if x >= 3 and y != 4:\n    print(1)\n",
+    "if x >= 3 and y != 4:\n    print(1)\n");
+  t("pygmify", "a missing colon is added", pygmify,
+    "if x == 3\n    print(1)\n",
+    "if x == 3:\n    print(1)\n");
+  t("pygmify", "plain code is untouched", pygmify,
+    "x = 1\nprint(x + 1)\n",
+    "x = 1\nprint(x + 1)\n");
+
+  // --- replacePrintConcatenationWithArgs ----------------------------------
+  // This is the function whose missing `var pass1` broke the Pyodide build.
+  t("printConcat", "concatenation becomes arguments", replacePrintConcatenationWithArgs,
+    'print("a" + 2 + "b")\n',
+    'print("a" , 2 , "b",sep=\'\')\n');
+  t("printConcat", "a print with no + is untouched", replacePrintConcatenationWithArgs,
+    'print("hello")\n',
+    'print("hello")\n');
+  t("printConcat", "+ inside a string is not a concatenation", replacePrintConcatenationWithArgs,
+    'print("1 + 1")\n',
+    'print("1 + 1")\n');
+  t("printConcat", "non-print lines pass through", replacePrintConcatenationWithArgs,
+    'x = "a" + "b"\n',
+    'x = "a" + "b"\n');
+
+  // --- run_lexer: the cloud-variable rewrite ------------------------------
+  // Note the name keeps its cloud_ prefix on the wire - the server-side
+  // variable really is called "cloud_score", not "score". Recorded from the
+  // working Skulpt build rather than assumed.
+  t("run_lexer", "cloud_ read becomes getCloudVariable", run_lexer,
+    "print(cloud_score)\n",
+    "print(getCloudVariable('cloud_score'))\n");
+  t("run_lexer", "cloud_ write becomes setCloudVariable", run_lexer,
+    "cloud_score = 10\n",
+    "setCloudVariable('cloud_score', 10)\n");
+  t("run_lexer", "ordinary code is reproduced verbatim", run_lexer,
+    "x = 1\nif x == 1:\n    print(x)\n",
+    "x = 1\nif x == 1:\n    print(x)\n");
+
+  // --- run ----------------------------------------------------------------
+  var results = [], pass = 0, fail = 0;
+
+  function lines(s) { return s.split("\n").length; }
+
+  cases.forEach(function (c) {
+    var got, err = null;
+    try {
+      got = c.fn(c.input);
+      // Run it a second time to prove the pass carries no state between calls
+      // - these functions used to communicate through implicit globals.
+      var again = c.fn(c.input);
+      if (again !== got) { err = "not idempotent across calls"; }
+    } catch (e) {
+      err = String(e && e.message || e);
+    }
+    var okText = !err && got === c.expected;
+    // Every pass rewrites within lines; none may add or remove one.
+    var okLines = !err && lines(got) === lines(c.input);
+    var ok = okText && okLines;
+    if (ok) { pass++; } else { fail++; }
+    results.push({
+      group: c.group, name: c.name, ok: ok,
+      error: err, input: c.input, expected: c.expected, got: got,
+      lineDrift: err ? null : lines(got) - lines(c.input)
+    });
+  });
+
+  // --- render -------------------------------------------------------------
+  var report = document.getElementById("report");
+  var group = null;
+  results.forEach(function (r) {
+    if (r.group !== group) {
+      group = r.group;
+      var h = document.createElement("h2");
+      h.textContent = group;
+      report.appendChild(h);
+    }
+    var d = document.createElement("div");
+    d.className = r.ok ? "ok" : "bad";
+    d.textContent = (r.ok ? "PASS  " : "FAIL  ") + r.name;
+    report.appendChild(d);
+    if (!r.ok) {
+      var p = document.createElement("pre");
+      p.textContent =
+        (r.error ? "error:    " + r.error + "\n" : "") +
+        "input:    " + JSON.stringify(r.input) + "\n" +
+        "expected: " + JSON.stringify(r.expected) + "\n" +
+        "got:      " + JSON.stringify(r.got) +
+        (r.lineDrift ? "\nline drift: " + r.lineDrift : "");
+      report.appendChild(p);
+    }
+  });
+
+  document.getElementById("out").textContent = JSON.stringify({
+    total: results.length, pass: pass, fail: fail,
+    failures: results.filter(function (r) { return !r.ok; })
+                     .map(function (r) { return r.group + ": " + r.name; })
+  });
+  document.title = "DONE";
+})();
+</script>
+</body>
+</html>
