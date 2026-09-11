@@ -1,0 +1,6 @@
+speech import * gives: ['listen', 'say']
+say signature : (text, voice=0)
+listen sig    : (t)
+distinct from csinsc.say: True
+csinsc.say sig: (text, voice=0, language='english')
+sendsms: sendsms() is not available. It has never worked - the function it calls is commented out in the Skulpt library too.

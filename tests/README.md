@@ -26,6 +26,9 @@ current code and the eventual Pyodide build.
 | `urlmodes.html` | Smoke-tests the URL-parameter surface the corpus never reaches: `?code=`, localStorage, headless, and the button-visibility flags. Includes a `?code=` payload carrying `%`, `<`, `>` and `#`, which is where two shipped bugs were hiding |
 | `run-conformance.sh` | Runs the whole corpus in chunks and aggregates. The normal way to run it |
 | `pygmi.html` | Unit tests for `js/pygmi.js` - the goto/label spellings, the `?wheels=1` beginner dialect, the print-concatenation rewrite and the cloud-variable lexer. Pure string in, string out; also asserts every pass is line-preserving and carries no state between calls |
+| `check-combos.sh` | Runs a sample of the corpus through all four editor × runtime combinations. Phase 4 is on hold, so `?editor=ace` and `?runtime=skulpt` are supported features and need checking like anything else |
+| `check-pyodide.sh` | Runs `pyodide-only/*.py` under Pyodide and diffs each against its checked-in `.expected` file |
+| `pyodide-only/*.py` | Programs that **cannot** be compared against Skulpt: hardware modules that both runtimes can only fail at (differently, on purpose), and behaviour the port deliberately corrects. Each has a `.expected` beside it |
 | `turtle-api/*.py` | Hand-written programs for the turtle functions no curriculum file calls - `circle`, `dot`, `stamp`, `setheading`, `pensize`, `fillcolor`, `write(move=True)`, the shape table, `tracer`/`update`, `degrees`/`radians`, multiple turtles. Not in `projects/` on purpose: they are not curriculum and must not reach the manifest or the goldens |
 | `canvas-probe.html` | Runs ONE drawing program under ONE interpreter and reports what it painted |
 | `compare-canvas.sh` | Drives the probe over the pyangelo files and diffs the pixels |
@@ -111,7 +114,26 @@ same for the interpreter. When it finishes, `<title>` becomes `DONE` and `#out`
 holds a JSON report; in record mode the report includes the goldens, which you
 extract to `tests/goldens.json`.
 
-`--virtual-time-budget` fast-forwards timers, so `sleep()` costs nothing.
+`--virtual-time-budget` fast-forwards timers, so `sleep()` costs nothing - **but
+only for Skulpt.** `run-conformance.sh` switches to `cdp-run.js` and real time
+whenever `EXTRA` names the Pyodide runtime, and that is not an optimisation to
+undo:
+
+> Chunk 40-49 timed out on its first attempt in three separate full runs and
+> passed on retry each time. It is not a bad file and it is not chunk size -
+> `limit=10` completed while `limit=8` hung, minutes apart. Under virtual time
+> that chunk hung for **322 seconds**; over CDP in real time it completed in
+> **30, 30 and 31 seconds** across three runs with identical tallies.
+>
+> The mechanism is the one the canvas probe already ran into. Virtual time only
+> advances while the page is idle, and every Pyodide yield goes through
+> `requestAnimationFrame` - `js/py/yielding.py` on each loop back-edge, and
+> `gotolabel`'s label yield. A program suspended on rAF is not idle, so virtual
+> time stalls, so the frame never arrives. Skulpt is immune because
+> `killableWhile` yields through macrotasks, which virtual time fast-forwards
+> happily.
+
+Real time costs roughly 1.5x on a Pyodide chunk and buys back the retries.
 
 ## Long runs: the two-minute rule
 
@@ -137,19 +159,27 @@ tests/compare-canvas.sh 30 turtle 2>&1 | tee /tmp/turtle.log
 ```
 
 ```sh
-# 2. Heartbeat, every 90s. Run it as a watcher - not as something you intend to
-#    remember. The log is the primary signal: if it grew, the run is fine.
-prev=0
+# 2. Heartbeat: check every 60s, and PROBE FOR LIFE after 2 minutes without a
+#    new line. Run it as a watcher - not as something you intend to remember.
+#    The log is the primary signal: if it grew, the run is fine.
+prev=0; stale=0
 while ! grep -qE 'TOTAL [0-9]+ files|problem\(s\)|no blank' /tmp/turtle.log; do
+    sleep 60
     n=$(wc -l < /tmp/turtle.log)
-    echo "log=$n lines (was $prev)"
-    prev=$n
-    sleep 90
+    if [ "$n" -gt "$prev" ]; then prev=$n; stale=0; continue; fi
+    stale=$((stale + 1))
+    [ "$stale" -ge 2 ] && { echo "no new line for 2 min - run step 3"; stale=0; }
 done
 ```
 
+The thresholds are the rule, not a detail. A first version checked every 90
+seconds and only probed after three quiet beats - **four and a half minutes**,
+more than double the two-minute limit - and nobody noticed until the question
+was asked directly. Check the arithmetic of a watcher, not just that one is
+running.
+
 ```powershell
-# 3. Only when the log has NOT grown for a few beats: is the browser alive?
+# 3. Only after 2 minutes with no new log line: is the browser alive?
 #    Sum the whole process tree - the parent alone is idle by design.
 $p    = Get-CimInstance Win32_Process | Where-Object Name -eq 'chrome.exe'
 $hl   = $p | Where-Object { $_.CommandLine -match '--headless' }
@@ -180,10 +210,10 @@ signals at once — a `tail`-buffered log and a CPU figure from the wrong
 processes — read exactly like a hang, and a perfectly good run got killed on
 the strength of them.
 
-### The two traps that make this fail
+### The traps that make this fail
 
-Both were hit in a single session, and between them they cost about forty
-minutes of a run that should have taken two:
+All three have been hit here, and each one makes the monitoring *look* set up
+while telling you nothing:
 
 1. **Piping a long run through `tail`, `head` or `sort` buffers the whole
    stream.** `run-conformance.sh compare | tail -5` reads as "just show me the
@@ -191,7 +221,16 @@ minutes of a run that should have taken two:
    stays empty, and a watcher pointed at that log can never fire — so the
    monitoring *looks* set up while reporting nothing. Log everything; filter
    when you read.
-2. **Orphaned headless browsers throttle every later run.** A driver that is
+2. **A machine that sleeps mid-run leaves it dead, and `timeout` does not save
+   you.** Observed here: a browser still alive after **4 hours 15 minutes**
+   holding 9 seconds of CPU, with the log frozen on one chunk, because the
+   machine suspended overnight. `run-conformance.sh` gives each chunk
+   `timeout 300`, but that is wall-clock and does not fire sensibly across a
+   suspend. The tell is the *age* of the oldest process against how long the
+   run should have taken - which is why the liveness check prints it. Kill the
+   browsers, kill the driver, start again; the partial log is worthless because
+   you cannot tell which chunks ran before the machine went down.
+3. **Orphaned headless browsers throttle every later run.** A driver that is
    killed or times out leaves its Chrome behind, idle-looking but competing for
    CPU. Twelve of them from two earlier runs stretched a two-minute conformance
    pass past half an hour; chunks dropped straight back to 5s once they were
@@ -227,6 +266,12 @@ minutes of a run that should have taken two:
   offset, so editing `compare-canvas.sh` mid-run corrupts execution from that
   point; and `canvas-probe.html` is re-fetched per file, so an edit applies to
   the second half of a run and not the first. Stop the run, edit, re-run.
+- **Killing the shell does not kill the run.** Stopping the parent leaves
+  `run-conformance.sh` and its browsers running: a "cancelled" pass here went
+  on to complete and write its summary *while the replacement pass was already
+  going*, so two full conformance runs competed for the machine and both
+  results were suspect. After cancelling anything long, confirm no headless
+  Chrome and no `run-conformance` process survives before starting again.
 
 ## Verdicts
 
@@ -235,6 +280,7 @@ minutes of a run that should have taken two:
 | `pass` | Console output is byte-identical to the golden |
 | `smoke` | File uses `random`/`time`, so its text can't be compared. Asserts only that it still runs and still does/doesn't raise |
 | `timeout` | Didn't finish inside 20s. The golden is partial and marked `TRUNCATED` |
+| `unchecked` | Cross-runtime only: the golden raised, so the file was going to be asked "do you still raise?", and the run was cut short before we could tell. **Not a pass** - it is listed by name in the summary so a shrinking failure count cannot be read as an improvement |
 | `fail` | Output differs, or an expected error stopped happening |
 | `new` | No golden recorded yet |
 
@@ -259,6 +305,28 @@ Two honest limits:
   variable-length dice games produce different output every run and no
   normalisation makes them comparable. They get `smoke` instead - which still
   catches a crash or a control-flow regression, but not a wording change.
+- **"Did it raise?" is decided by a colour, not by an exception.**
+  `raisedAnError()` looks for the exact red foreground escape `logError()`
+  paints with - but the curriculum also *prints* red text. Across the 122
+  goldens containing that escape, 105 look like genuine errors and **17 are red
+  output with no error at all**, so the predicate over-reports by about 14%.
+  That is the safe direction for the `unchecked` verdict (it flags files that
+  had nothing to verify) but it also means a `pass` reading "raised, as
+  expected" is sometimes only "printed something red, as expected".
+- **48 of the 226 files are `unchecked` under Pyodide, and that is the gate's
+  real coverage limit.** They are interactive programs whose golden raised and
+  which the harness cut short - at 60 inputs or 20 seconds - before it could
+  ask whether they still raise. They were previously reported as `smoke`,
+  indistinguishable from "ran fine", which let the failure count move on its
+  own: two Pyodide passes minutes apart, no code change between them, gave
+  `168 pass · 57 smoke · 1 fail` and `168 pass · 56 smoke · 2 fail`, because
+  `intro.v2/answers/0604a` (the `quit()` loop) drifted across the truncation
+  boundary. With the split there are **48 unchecked and only 9 genuine
+  smokes**. **Treat a drop in the failure count as suspicious until you have
+  found the file that moved**, and check it in isolation -
+  `offset=<index in the automatable list>&limit=1` runs exactly one. Most of
+  the 48 would become real comparisons with a longer input script or per-file
+  `Conform.setFixtures()`.
 - **The corpus never runs `?wheels=1`.** All 6 `wheels`-tagged files are turtle
   files, so all 6 carry the blocking `canvas` tag and **0 of the 226 automatable
   files** exercise the `pygmify` preprocessor. That is how a `pass1 is not
@@ -334,7 +402,91 @@ burning the entire budget on real painting and the dump never arrives - the
 symptom is a zero-byte output file that looks like a mystery rather than a
 timeout. One browser per file per runtime keeps each page short-lived.
 
+## The four combinations
+
+```sh
+tests/check-combos.sh 20      # ~3 min
+```
+
+Deleting Skulpt and Ace (Phase 4) is **on hold by decision**, so both remain
+switchable and both have to keep working:
+
+| | Skulpt | Pyodide |
+| --- | --- | --- |
+| **Monaco** | default today | `?runtime=pyodide` |
+| **Ace** | `?editor=ace` | `?editor=ace&runtime=pyodide` |
+
+The full conformance run only ever exercises one of those four. This samples the
+corpus through all of them, so a change that quietly breaks the fallback is
+caught by something other than a person trying it months later. Last measured,
+20 files each:
+
+```
+monaco + skulpt (default)    {"pass":15,"timeout":1,"smoke":4}
+ace + skulpt                 {"pass":15,"timeout":1,"smoke":4}
+monaco + pyodide             {"pass":14,"unchecked":6}
+ace + pyodide                {"pass":14,"unchecked":6}
+```
+
+The tallies match within each runtime, which is the useful signal: the editor
+has no effect on what a program does. The `unchecked` verdicts under Pyodide are
+expected - passing `runtime=` puts `conform.js` into cross-runtime mode, where a
+truncated run is not asked whether it still raises.
+
+## Pyodide-only checks
+
+```sh
+tests/check-pyodide.sh              # all of them
+tests/check-pyodide.sh microbit_logic
+```
+
+Some ported modules cannot be compared against Skulpt at all, and pretending
+otherwise would either weaken the check or lock in a bug:
+
+- **Hardware.** micro:bit needs a paired board and speech needs microphone
+  permission, so in headless Chrome both runtimes can only fail - and they fail
+  *differently on purpose*, because the port reports a clear message where the
+  fork threw whatever the browser threw.
+- **Deliberate corrections.** `Microbit.getCompass()` answered `"NW"` for
+  north in the fork. Matching Skulpt would mean keeping the bug.
+- **Things headless Chrome has no device for.** `babylon` needs WebGL and
+  `speech` needs a microphone, so a cross-runtime comparison of either is a
+  comparison of two failures.
+
+What the checks cover today:
+
+| File | Checks |
+| --- | --- |
+| `microbit_logic.py` | The compass arithmetic at every boundary, and the failed-pairing path |
+| `perlin_values.py` | Seven noise values and a mirroring case, against numbers computed from the fork's JavaScript. **Exact to 12 decimal places** - Perlin is pure arithmetic, so there is no reason to accept less |
+| `babylon_scene.py` | Builds `demos/vr.py`'s scene, stubs the handover and prints the exact description that crosses to JavaScript. Catches the two failure modes that would otherwise show up only as an empty 3D canvas: a `Map` instead of a plain object, and unresolved object references |
+| `speech_sendsms.py` | The module surface - that `speech.say` is not `csinsc.say`, and that the long-dead `sendsms` says so |
+| `speech_safety.py` | The profanity filter and the language table, by intercepting `speechSynthesis.speak` - nothing has to be audible |
+| `builtin_pyangelo.py` | The whole Processing-style API, `vector` and `sprite`, plus **real dispatched mouse and key events**, because `mouseX` updating is a callback from JavaScript into Python and nothing else would exercise it |
+| `turtle_events.py` | `onkey` / `onkeypress` / `onscreenclick` with real dispatched events |
+
+**Dispatch the real event; do not trust that a callback is wired.** Three bugs
+in this port were completely silent, because every host wraps its callbacks in
+`try/catch` and none of this code is reachable from the curriculum: a Python
+callable handed to JavaScript is destroyed as soon as the call that received
+it returns (use `create_proxy`); a JavaScript `null` arrives in Python as
+`JsNull`, which `is not None` (pass `undefined`); and the speech bridge had
+lost its profanity filter. Each was found only by a test that fired the actual
+DOM event or intercepted the actual browser call.
+
+So these are diffed against a checked-in `.expected` file instead. Lines
+beginning `Error:` are normalised before comparison: the text after them is
+Chrome's, not ours, and changes between versions - the check is that the line is
+there, not what it says.
+
 ## What is still unverified
+
+**Everything the micro:bit actually does.** 43 curriculum files import it, and
+none of them can run here. `pyodide-only/microbit_logic.py` covers the compass
+arithmetic at every boundary and the failed-pairing path, and the LED
+bit-packing was checked exhaustively against the fork's algorithm for all 32 row
+patterns - but pairing, the buttons, the screen and the sensors need a human
+with a flashed board.
 
 `?id=` (codestore snapshots) needs the live web service, so nothing here covers
 it. Check it by hand after touching `fetchFromCodestore()` in `editor.js`.
@@ -355,6 +507,16 @@ would have scored a flawless ink ratio with one runtime drawing the picture and
 the other drawing nothing at all. Summed intensity is the second, independent
 axis, and it is what actually exposed that file. Prefer two cheap orthogonal
 metrics over one clever one.
+
+**"We could not tell" must not be spelled the same as "fine".** The harness had
+one verdict, `smoke`, covering both "text is not comparable, but it ran" and
+"the run was cut short before we could check whether it still errors". The
+second is an untested case wearing a passing colour, and it moved the failure
+count on its own: two identical Pyodide passes reported 1 fail and 2 fail with
+no code change between them, because one file drifted across that boundary.
+Splitting out `unchecked` — listed by name in the summary, amber in the UI —
+costs six lines and makes a shrinking failure count impossible to misread.
+Whenever a verdict can mean "not verified", give it its own name.
 
 **Compare what the user sees, not what the DOM holds.** The turtle target is
 three stacked canvases and Skulpt allocates them lazily, so its background

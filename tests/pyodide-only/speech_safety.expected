@@ -1,0 +1,6 @@
+unknown language raises: JsException
+spoke: 'hello there' lang: 'en-AU'
+spoke: 'bonjour' lang: 'fr-FR'
+spoke: 'guten tag' lang: 'de-DE'
+spoke: 'plain speech module' lang: 'en-AU'
+spoke: '<refused>' lang: 'en-AU'

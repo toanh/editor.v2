@@ -87,6 +87,19 @@ var Runtime = (function () {
             return required().teardown();
         },
 
+        // Wire up builtin PyAngelo. Called from console.js's setCanvasSize,
+        // once the JSFrame holding #canvas exists.
+        //
+        // Skulpt does this itself in the fork (Sk.PyAngelo.preparePage plus
+        // Sk.builtin._setCanvasSize) so its backend has no implementation here;
+        // Pyodide has to do it from Python, because the API is a set of
+        // *builtins* and mouseX/mouseY have to be real names a student can read.
+        setupBuiltinPyangelo: function (w, h, yAxisMode) {
+            var b = required();
+            if (typeof b.setupBuiltinPyangelo !== "function") { return; }
+            return b.setupBuiltinPyangelo(w, h, yAxisMode);
+        },
+
         // Render an error thrown by run() as a single line of text.
         formatError: function (err) {
             return required().formatError(err);

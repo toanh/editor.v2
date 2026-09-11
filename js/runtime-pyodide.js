@@ -19,7 +19,7 @@
 
 var PyodideRuntime = (function () {
     var PY_LIB = "/pyeditor";   // where js/py/*.py is mounted inside Pyodide
-    var PY_LIB_VERSION = 13;     // bump when any js/py/*.py changes
+    var PY_LIB_VERSION = 21;     // bump when any js/py/*.py changes
 
     var py = null;              // the Pyodide API object
     var prelude = null;         // the imported prelude module
@@ -98,6 +98,74 @@ var PyodideRuntime = (function () {
         );
     }
 
+    // Speech synthesis, ported from the fork's src/lib/csinscTools.js.
+    //
+    // Two things here are NOT decoration and were missing from the first version of
+    // this bridge, which is a regression that reached 11+ curriculum files:
+    //
+    //   1. A profanity filter. This is a product for primary schools and the
+    //      computer will say whatever a child types. Matching text is replaced with
+    //      a jokey refusal rather than being spoken. The list stays base64-encoded,
+    //      as in the fork - the point is that the source file is not itself full of
+    //      slurs.
+    //   2. A language table. say(text, language="french") must actually speak
+    //      French, and an unknown language must raise rather than silently speak
+    //      English.
+    //
+    // Also faithful to the fork: the utterance is fire-and-forget. csinsc.py has a
+    // commented-out "block until finished speaking" loop, so the Python call
+    // returns immediately and the browser queues the speech.
+    var SPEECH_BAD_WORDS = [
+        "YXJzZQ==", "YXJzZWhvbGU=", "YmFsbHM=", "YmFzdGFyZA==",
+        "YmVlZg==", "Y3VydGFpbnM=", "Y3Vt", "YmVsbGVuZA==",
+        "Yml0Y2g=", "YnVra2FrZQ==", "YnVsbHNoaXQ=", "Y2Fjaw==",
+        "Y2hvYWQ=", "Y29jaw==", "Y29jayBjaGVlc2U=", "Y29jayBqb2NrZXk=",
+        "Y29ja3N1Y2tlcg==", "Y293", "Y3JhcA==", "Y3Jpa2V5",
+        "Y3VudA==", "ZGFtbg==", "ZGljaw==", "ZGlja2hlYWQ=",
+        "ZGlsZG8=", "ZHVmZmVy", "ZmFubnk=", "ZmVjaw==",
+        "ZmxhcHM=", "ZnVjaw==", "ZnVja2luZyBjdW50", "ZnVja3RhcmQ=",
+        "Z29kZGFt", "amVzdXMgY2hyaXN0", "aml6eg==", "a25vYg==",
+        "a25vYmhlYWQ=", "bWFua3k=", "bWluZ2U=", "bW90aGVyZnVja2Vy",
+        "bXVudGVy", "bXVwcGV0", "bmFmZg==", "bml0d2l0",
+        "bnVtcHR5", "bnV0dGVy", "cGlzcyBvZmY=", "cGlzcy1mbGFwcw==",
+        "cGlzc2Vk", "cGlzc2VkIG9mZg==", "cGxvbmtlcg==", "cG9uY2U=",
+        "cG9vZg==", "cG91Zg==", "cHJpY2s=", "cHVzc3k=",
+        "cmFwZXk=", "c2hhZw==", "c2hpdA==", "c2thbms=",
+        "c2xhZw==", "c2xhcHBlcg==", "c2x1dA==", "c25hdGNo",
+        "c3B1bms=", "dGFydA==", "dGl0", "dG9zc2Vy",
+        "dHJvbGxvcA==", "dHdhdA==", "d2Fua2Vy", "d2Fua3N0YWlu",
+        "d2hvcmU=", "Y3VudA==", "ZmFnZ290", "bmlnZ2Vy",
+        "cGVuaXM="
+    ];
+
+    var SPEECH_REPLIES = [
+        "nice try", "better luck next time",
+        "do you talk to your grandmother with that foul language?",
+        "ah nope", "HELP! this student is trying to swear", "get back to work please"
+    ];
+
+    var SPEECH_LANGUAGES = {
+        "arabic": "ar-SA", "bangla": "bn-BD", "indian bangla": "bn-IN",
+        "czech": "cs-CZ", "danish": "da-DK", "austrian german": "de-AT",
+        "swiss german": "de-CH", "german": "de-DE", "greek": "el-GR",
+        "english": "en-AU", "australian english": "en-AU", "canadian english": "en-CA",
+        "british english": "en-GB", "irish english": "en-IE", "indian english": "en-IN",
+        "new zeland english": "en-NZ", "american english": "en-US", "south african english": "en-ZA",
+        "argentine spanish": "es-AR", "chilean spanish": "es-CL", "colombian spanish": "es-CO",
+        "spanish": "es-ES", "mexican spanish": "es-MX", "american spanish": "es-US",
+        "finnish": "fi-FI", "belgian french": "fr-BE", "canadian french": "fr-CA",
+        "swiss french": "fr-CH", "french": "fr-FR", "hebrew": "he-IL",
+        "hindi": "hi-IN", "hungarian": "hu-HU", "indonesian": "id-ID",
+        "swiss italian": "it-CH", "italian": "it-IT", "japanese": "ja-JP",
+        "korean": "ko-KR", "belgian dutch": "nl-BE", "dutch": "nl-NL",
+        "norwegian": "no-NO", "polish": "pl-PL", "brazilian portugese": "pt-BR",
+        "portugese": "pt-PT", "romanian": "ro-RO", "russian": "ru-RU",
+        "slovak": "sk-SK", "swedish": "sv-SE", "tamil": "ta-IN",
+        "sri lankan tamil": "ta-LK", "thai": "th-TH", "turkish": "tr-TR",
+        "chinese": "zh-CN", "mandarin": "zh-CN", "hong kong chinese": "zh-HK",
+        "cantonese": "zh-HK", "taiwan chinese": "zh-TW", "taiwanese": "zh-TW"
+    };
+
     function notYet(name) {
         return function () {
             return Promise.reject(new Error(
@@ -126,15 +194,39 @@ var PyodideRuntime = (function () {
 
         // --- speech ---------------------------------------------------------
         saySomething: function (text, voice, lang) {
-            return cancellable(new Promise(function (resolve) {
-                if (!window.speechSynthesis || !text) { return resolve(true); }
-                var u = new SpeechSynthesisUtterance(String(text));
-                var voices = window.speechSynthesis.getVoices();
-                if (voices.length) { u.voice = voices[Math.abs(voice | 0) % voices.length]; }
-                u.onend = function () { resolve(true); };
-                u.onerror = function () { resolve(false); };
-                window.speechSynthesis.speak(u);
-            }));
+            if (!window.speechSynthesis) { return; }
+            text = String(text === undefined || text === null ? "" : text);
+
+            // The filter runs before anything else, and on the whole string -
+            // substring match, exactly as the fork does it.
+            var lowered = text.toLowerCase();
+            for (var i = 0; i < SPEECH_BAD_WORDS.length; i++) {
+                if (lowered.indexOf(atob(SPEECH_BAD_WORDS[i])) > -1) {
+                    text = SPEECH_REPLIES[Math.floor(Math.random() * SPEECH_REPLIES.length)];
+                    break;
+                }
+            }
+
+            var u = new SpeechSynthesisUtterance(text);
+            var voices = window.speechSynthesis.getVoices();
+            if (voices.length) {
+                var v = Math.abs(voice | 0);
+                if (v >= voices.length) { v %= voices.length; }
+                u.voice = voices[v];
+            }
+            u.pitch = 1;
+            u.rate = 1;
+
+            if (lang !== undefined && lang !== null) {
+                var key = String(lang).toLowerCase();
+                if (!(key in SPEECH_LANGUAGES)) { throw new Error("Unknown language"); }
+                u.lang = SPEECH_LANGUAGES[key];
+            }
+
+            // Fire and forget, as in the fork: csinsc.py's "block until
+            // finished speaking" loop is commented out there, so the Python
+            // call returns straight away and the browser queues the utterance.
+            window.speechSynthesis.speak(u);
         },
         startListen: function () { if (typeof startListen === "function") startListen(); },
         stopListen: function () {
@@ -332,7 +424,9 @@ var PyodideRuntime = (function () {
                 // at csinsc.py. The manifest is maintained by hand - there is
                 // no build step to generate one.
                 var MANIFEST = ["prelude.py", "gotolabel.py", "yielding.py", "csinsc.py",
-                                "goodies.py", "pyangelo.py", "turtle.py"];
+                                "goodies.py", "pyangelo.py", "turtle.py", "microbit.py",
+                                "speech.py", "babylon.py", "perlin.py", "sendsms.py",
+                                "pyangelo_builtins.py", "vector.py", "sprite.py"];
                 py.FS.mkdirTree(PY_LIB);
                 var sources = await Promise.all(MANIFEST.map(function (f) {
                     return fetchText("js/py/" + f + "?t=" + PY_LIB_VERSION);
@@ -397,14 +491,28 @@ var PyodideRuntime = (function () {
             // listeners, the counterpart of Sk.PyAngelo.stopPyangelo().
             try { PyAngeloHost.stop(); } catch (e) {}
             try { TurtleHost.stop(); } catch (e) {}
+            // A board left paired across runs keeps notifying into an
+            // interpreter that is no longer listening.
+            try { MicrobitHost.stopAll(); } catch (e) {}
+            try { PyAngeloBuiltinHost.stop(); } catch (e) {}
             // A re-run must re-import these so their module-level start()
             // runs again; otherwise the second run draws into a canvas with
             // no render loop, or into a turtle layer that no longer exists.
             try {
                 py.runPython("import sys\n" +
-                             "for _m in ('pyangelo', 'turtle'):\n" +
+                             "for _m in ('pyangelo', 'turtle', 'microbit', 'babylon'):\n" +
                              "    sys.modules.pop(_m, None)\n");
             } catch (e) {}
+        },
+
+        // Builtin PyAngelo is a set of *builtins*, so it can only be
+        // installed from inside Python. console.js calls this the moment a
+        // program opens a canvas - the same point the fork runs preparePage().
+        setupBuiltinPyangelo: function (w, h, yAxisMode) {
+            if (!py) { throw new Error("The interpreter is still starting up."); }
+            var mod = py.pyimport("pyangelo_builtins");
+            mod.install();
+            mod._setCanvasSize(w, h, yAxisMode === undefined ? 1 : yAxisMode);
         },
 
         run: function (opts) {

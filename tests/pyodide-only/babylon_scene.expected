@@ -1,0 +1,8 @@
+<reset>
+BObj0 Mesh {"_animations": ["BObj5"], "material": "BObj2", "meshType": "sphere", "orientation": [0, 0, 0], "position": [0, 0, 5], "radius": 2, "segments": 16}
+BObj1 DirectionalLight {"_animations": [], "diffuse": [0.7, 0.7, 0.7], "direction": [-0.25, -1, 0.25], "specular": [1, 1, 1]}
+BObj2 Material {"_animations": [], "ambientColour": [1, 1, 1], "ambientTexture": "BObj3", "type": "standard"}
+BObj3 Texture {"_animations": [], "url": "babylon/textures/wood.jpg"}
+BObj4 Skybox {"_animations": [], "size": 1000, "texture": "babylon/textures/skybox"}
+BObj5 Animation {"_animations": [], "frameRate": 10, "keys": [{"frame": 0, "value": 0}, {"frame": 20, "value": 3.14159}], "property": "rotation.y"}
+<start>

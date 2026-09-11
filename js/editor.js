@@ -73,10 +73,15 @@ function beginAnimation(bObjName, startFrame, endFrame, loop) {
 }
 
 function addObject(bObj) {
-  // copy internal dict
-  var jsBObj = Sk.ffi.remapToJs(bObj.$d);
-  // replace references with their object name
-  // for 2nd pass resolution
+  // Takes one Python object's attribute dict and stashes it for
+  // babylonCreateScene()'s two passes. References between objects have already
+  // been replaced by name on the Python side, in startBabylon().
+  //
+  // Both interpreters hand it over differently: Skulpt passes its own instance,
+  // whose attributes live in $d and need remapping, while the Pyodide module
+  // converts __dict__ to a plain object before calling. Accepting either keeps
+  // one implementation of the scene builder.
+  var jsBObj = (bObj && bObj.$d) ? Sk.ffi.remapToJs(bObj.$d) : bObj;
   _babylonObjects[jsBObj.bObjName] = jsBObj;
 }
 

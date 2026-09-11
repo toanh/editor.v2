@@ -36,12 +36,43 @@ if ! curl -s -o /dev/null "http://localhost:$PORT/editor.html"; then
     exit 1
 fi
 
-run_chunk() {  # off attempt -> writes chunk-$off.html, returns chrome's status
-    timeout 300 "$CHROME" --headless --disable-gpu --no-sandbox \
-        --user-data-dir="$WORK/profile-$1-$2" \
-        --virtual-time-budget=1800000 --dump-dom \
-        "http://localhost:$PORT/tests/conform-cli.html?mode=$MODE&offset=$1&limit=$CHUNK$FILTER${EXTRA:+&with=$(printf %s "$EXTRA" | sed 's/=/%3D/g')}" \
-        > "$WORK/chunk-$1.html" 2>/dev/null
+URL_FOR() {  # off -> the conform-cli URL for that chunk
+    printf 'http://localhost:%s/tests/conform-cli.html?mode=%s&offset=%s&limit=%s%s%s' \
+        "$PORT" "$MODE" "$1" "$CHUNK" "$FILTER" \
+        "${EXTRA:+&with=$(printf %s "$EXTRA" | sed 's/=/%3D/g')}"
+}
+
+# Pyodide runs must NOT use --virtual-time-budget.
+#
+# Measured, after chunk 40-49 timed out on its first attempt in three separate
+# full runs and then passed on retry: the same chunk hung for 322s under virtual
+# time and completed in 30, 30 and 31 seconds over CDP in real time, with
+# identical tallies. It is not a bad file and it is not chunk size - `limit=10`
+# finished while `limit=8` hung, minutes apart.
+#
+# The mechanism is the one the canvas probe already ran into. Virtual time
+# advances only while the page is idle, and Pyodide's yields go through
+# requestAnimationFrame (js/py/yielding.py on every loop back-edge, and
+# gotolabel's label yield). A program suspended on rAF is not idle, so virtual
+# time stalls, so the frame never comes. Skulpt is immune because killableWhile
+# yields through macrotasks, which virtual time fast-forwards happily.
+#
+# Real time costs about 1.5x on a Pyodide chunk and removes the retries.
+case "$EXTRA" in
+    *runtime=pyodide*) REALTIME=1 ;;
+    *)                 REALTIME=0 ;;
+esac
+
+run_chunk() {  # off attempt -> writes chunk-$off.out, returns the driver's status
+    if [ "$REALTIME" = "1" ]; then
+        timeout 600 node tests/cdp-run.js "$(URL_FOR "$1")" "#out" 570000 \
+            > "$WORK/chunk-$1.out" 2>/dev/null
+    else
+        timeout 300 "$CHROME" --headless --disable-gpu --no-sandbox \
+            --user-data-dir="$WORK/profile-$1-$2" \
+            --virtual-time-budget=1800000 --dump-dom \
+            "$(URL_FOR "$1")" > "$WORK/chunk-$1.out" 2>/dev/null
+    fi
 }
 
 echo "mode=$MODE  chunk=$CHUNK  total=$TOTAL${FILTER:+  filter=$FILTER}${EXTRA:+  with=$EXTRA}"
@@ -65,16 +96,21 @@ while [ "$off" -lt "$TOTAL" ]; do
         node -e '
 const fs = require("fs");
 const h = fs.readFileSync(process.argv[1], "utf8");
+// Two shapes: --dump-dom gives a whole HTML page with the report inside a
+// <pre>, cdp-run.js gives that element text directly.
 const m = h.match(/<pre id="out">([\s\S]*?)<\/pre>/);
-if (!m) { console.log(process.argv[2] + "s  no report"); process.exit(0); }
-const r = JSON.parse(m[1].replace(/&quot;/g,"\"").replace(/&lt;/g,"<")
-                         .replace(/&gt;/g,">").replace(/&amp;/g,"&"));
+const raw = m ? m[1].replace(/&quot;/g,"\"").replace(/&lt;/g,"<")
+                    .replace(/&gt;/g,">").replace(/&amp;/g,"&")
+              : h;
+let r;
+try { r = JSON.parse(raw); }
+catch (e) { console.log(process.argv[2] + "s  no report"); process.exit(0); }
 const bad = r.results.filter(x => ["fail","error","new"].includes(x.verdict));
 console.log(process.argv[2] + "s  " + JSON.stringify(r.tally) +
             (bad.length ? "   BAD: " + bad.map(x => x.path + "(" + x.verdict + ")").join(", ")
                         : ""));
 fs.writeFileSync(process.argv[3], JSON.stringify(r.results));
-' "$WORK/chunk-$off.html" "$el" "$WORK/res-$off.json"
+' "$WORK/chunk-$off.out" "$el" "$WORK/res-$off.json"
     fi
     off=$((off + CHUNK))
 done
@@ -93,6 +129,12 @@ console.log("TOTAL " + all.length + " files   " + JSON.stringify(tally));
 const bad = all.filter(r => ["fail","error","new"].includes(r.verdict));
 if (!bad.length) console.log("0 failures");
 else bad.forEach(r => console.log("  " + r.verdict.toUpperCase() + "  " + r.path + "  " + (r.note||"")));
+
+// Not failures, but not verified either - a cross-runtime run that was cut
+// short before its "does it still raise?" check. These are listed so a shrinking
+// failure count cannot be mistaken for an improvement.
+const unchecked = all.filter(r => r.verdict === "unchecked");
+unchecked.forEach(r => console.log("  UNCHECKED  " + r.path + "  " + (r.note||"")));
 
 // A dropped chunk shows up as a smaller total, not as a failure. Without this
 // check "0 failures" can quietly mean "0 failures among the files we managed

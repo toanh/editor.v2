@@ -792,18 +792,35 @@ let pyangeloFrameParent1 = null;
 let pyangeloFrameParent2 = null;
 
 // hijacking setCanvasSize to pop out new jsFrame
+//
+// This is the entry point for builtin PyAngelo under BOTH interpreters, and it
+// is also the moment their drawing APIs are wired up - which is deliberate.
+// builtin PyAngelo defines RED, BLUE, YELLOW and friends as integers, while
+// this file defines the same names as the console's escape strings. The fork
+// only installs its versions inside preparePage(), i.e. exactly here, so the
+// two colour systems never coexist and whichever the program asked for wins.
+// Installing them at boot instead would break every program that prints in
+// colour.
 function setCanvasSize(w, h, yAxisMode) {
-    Sk.builtin.pyCheckArgsLen("setCanvasSize", arguments.length, 2, 3);
-    Sk.builtin.pyCheckType("w", "integer", Sk.builtin.checkInt(w));
-    Sk.builtin.pyCheckType("h", "integer", Sk.builtin.checkInt(h));
-    Sk.builtin.pyCheckType("yAxisMode", "integer", Sk.builtin.checkInt(yAxisMode));
+    if (typeof Sk !== "undefined" && Sk.builtin && Sk.builtin.checkInt &&
+        Runtime.name() === "skulpt") {
+        Sk.builtin.pyCheckArgsLen("setCanvasSize", arguments.length, 2, 3);
+        Sk.builtin.pyCheckType("w", "integer", Sk.builtin.checkInt(w));
+        Sk.builtin.pyCheckType("h", "integer", Sk.builtin.checkInt(h));
+        Sk.builtin.pyCheckType("yAxisMode", "integer", Sk.builtin.checkInt(yAxisMode));
+    }
 
     if (pyangeloFrame === null) {
-        //Sk.PyAngelo.preparePage();
         createPyangeloFrame(w, h);
     }
 
-    Sk.builtin._setCanvasSize(w, h, yAxisMode);
+    // Skulpt's own canvas setup lives in the fork; the Pyodide runtime does the
+    // equivalent from Python, because that is where its builtins have to land.
+    if (Runtime.name() === "skulpt") {
+        Sk.builtin._setCanvasSize(w, h, yAxisMode);
+    } else {
+        Runtime.setupBuiltinPyangelo(w, h, yAxisMode);
+    }
 };
 
 Host.method("setCanvasSize", setCanvasSize, {
@@ -857,7 +874,12 @@ async function createPyangeloFrame(w, h) {
     pyangeloFrameParent1 = pyangeloFrame.htmlElement.parentElement;
     pyangeloFrameParent2 = pyangeloFrame.htmlElement.parentElement.parentElement;    
 
-    Sk.PyAngelo.preparePage();
+    // Skulpt binds its key/mouse handlers here. The Pyodide runtime does the
+    // same job from Python, driven by setCanvasSize below, because its mouseX
+    // and mouseY have to be set as real builtins.
+    if (Runtime.name() === "skulpt") {
+        Sk.PyAngelo.preparePage();
+    }
 }
 
 function destroyPyangeloFrame() {

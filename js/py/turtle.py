@@ -31,7 +31,20 @@ import js
 import _host
 from prelude import block
 
-from pyodide.ffi import can_run_sync
+from pyodide.ffi import can_run_sync, create_proxy
+
+
+def _callback(fn):
+    """A Python callable that JavaScript may call *later*.
+
+    Pyodide destroys a proxy passed as an argument to a JS function as soon as
+    that call returns, so a handler handed straight to addEventListener is dead
+    before the first key press - and fails silently, because the host catches
+    the error. Measured, not assumed: calling a stored plain callable raises
+    JsException, a create_proxy one works. TurtleHost destroys these when it
+    unbinds its listeners, so they do not leak across runs.
+    """
+    return create_proxy(fn)
 
 _canvas = js.TurtleHost
 
@@ -291,7 +304,7 @@ class _Screen(object):
         if fun is None:
             return None
         want = _key_name(key)
-        _canvas.onKey(_key_filter(fun, want), False)
+        _canvas.onKey(_callback(_key_filter(fun, want)), False)
 
     onkeyrelease = onkey
 
@@ -300,19 +313,19 @@ class _Screen(object):
             fun, key = key, fun
         if fun is None:
             return None
-        _canvas.onKey(_key_filter(fun, _key_name(key)), True)
+        _canvas.onKey(_callback(_key_filter(fun, _key_name(key))), True)
 
     def onclick(self, fun=None, btn=1, add=None):
         if fun is None:
             return None
-        _canvas.onClick(lambda x, y: fun(float(x), float(y)))
+        _canvas.onClick(_callback(lambda x, y: fun(float(x), float(y))))
 
     onscreenclick = onclick
 
     def ontimer(self, fun=None, t=0):
         if fun is None:
             return None
-        _canvas.setTimer(fun, t)
+        _canvas.setTimer(_callback(fun), t)
 
     # Both would need an <img> loaded into the canvas, which the fork supports
     # and nothing in the curriculum uses.

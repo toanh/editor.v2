@@ -127,6 +127,21 @@ def install():
     import time
     time.sleep = _sleep
 
+    # The two y-axis modes, and only those.
+    #
+    # Builtin PyAngelo installs its whole constant set when a program opens a
+    # canvas - which leaves setCanvasSize(600, 400, CARTESIAN) unable to name
+    # the constant its own documentation tells you to use, because it is what
+    # defines it. The fork has the same hole and students work around it by
+    # taking the default.
+    #
+    # These two are safe to hoist because nothing else defines them. The colour
+    # constants deliberately are NOT hoisted: RED, BLUE and friends mean
+    # integers there and escape strings in console.js, and installing them
+    # early would break every program that prints in colour.
+    builtins.CARTESIAN = 1
+    builtins.JAVASCRIPT = 2
+
 
 def bind_host_names(entries):
     """Bind the names console.js declared into the Host registry.

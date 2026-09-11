@@ -160,7 +160,11 @@
   function sample(win) {
     var m;
     try {
-      m = target === "turtle" ? sampleTurtle(win) : samplePyangelo(win);
+      // target=console draws nothing and is judged on its printed output
+      // alone - the micro:bit and speech modules, where the interesting part
+      // is the logic around hardware nobody has attached.
+      if (target === "console") { m = { ink: 0, pixels: 0, hash: 0 }; }
+      else { m = target === "turtle" ? sampleTurtle(win) : samplePyangelo(win); }
     } catch (e) {
       m = { error: String(e.name || e) };   // a cross-origin image taints the canvas
     }
@@ -200,7 +204,7 @@
   // e.g. with=editor%3Dace to run the same file against the Ace fallback.
   var params = "&name=__probe__&nosave=1&nosnap=1&nofs=1&runtime=" + runtime +
                (q.get("with") ? "&" + q.get("with") : "") +
-               (target === "turtle" ? "&norun=1" : "&autorun=1");
+               (target === "turtle" || target === "console" ? "&norun=1" : "&autorun=1");
 
   // Half the turtle corpus is written in the training-wheels dialect
   // (`repeat 6:`), which is a load-time source rewrite rather than a runtime
@@ -237,7 +241,8 @@
         }
         return setTimeout(poll, 60);
       }
-      return target === "turtle" ? runToCompletion(w) : countFrames(w);
+      return (target === "turtle" || target === "console")
+        ? runToCompletion(w) : countFrames(w);
     })();
   };
 

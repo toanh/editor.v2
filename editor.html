@@ -48,9 +48,11 @@
   <script src="js/pygmi.js?t=3" type="text/javascript" charset="utf-8"></script>
   <!-- registry for the Python-visible names console.js provides -->
   <script src="js/pyangelo-host.js?t=3" type="text/javascript" charset="utf-8"></script>
-  <script src="js/turtle-host.js?t=1" type="text/javascript" charset="utf-8"></script>
+  <script src="js/turtle-host.js?t=2" type="text/javascript" charset="utf-8"></script>
+  <script src="js/microbit-host.js?t=1" type="text/javascript" charset="utf-8"></script>
+  <script src="js/pyangelo-builtin-host.js?t=3" type="text/javascript" charset="utf-8"></script>
   <script src="js/hostapi.js?t=1" type="text/javascript" charset="utf-8"></script>
-  <script src="js/console.js?t=136" type="text/javascript" charset="utf-8"></script>
+  <script src="js/console.js?t=137" type="text/javascript" charset="utf-8"></script>
   <!-- Ace is no longer loaded here. Monaco is the editor; js/editor-ace.js
        pulls Ace in on demand for the ?editor=ace escape hatch. -->
 
@@ -144,12 +146,12 @@ height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
     <!-- editor + runtime facades and their backends: must load before editor.js -->
     <script src="js/editorapi.js?t=2" type="text/javascript" charset="utf-8"></script>
     <script src="js/editor-ace.js?t=2" type="text/javascript" charset="utf-8"></script>
-    <script src="js/runtime.js?t=3" type="text/javascript" charset="utf-8"></script>
+    <script src="js/runtime.js?t=4" type="text/javascript" charset="utf-8"></script>
     <script src="js/runtime-skulpt.js?t=2" type="text/javascript" charset="utf-8"></script>
     <!-- Pyodide: the loader is ~19 KB and defines loadPyodide(); the 13 MB of
          wasm and stdlib are only fetched if ?runtime=pyodide actually boots it. -->
     <script src="js/pyodide/pyodide.js" type="text/javascript" charset="utf-8"></script>
-    <script src="js/runtime-pyodide.js?t=5" type="text/javascript" charset="utf-8"></script>
+    <script src="js/runtime-pyodide.js?t=8" type="text/javascript" charset="utf-8"></script>
     <!-- Monaco's AMD loader installs global define()/require(). It goes last,
          after every UMD library above, so none of them register as AMD modules
          instead of setting their globals. -->

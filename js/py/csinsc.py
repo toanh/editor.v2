@@ -175,13 +175,23 @@ firstUtterance = True
 
 
 def say(text, voice=0, language="english"):
+    """Speaks the text. Returns immediately - the browser queues the speech.
+
+    Not blocking is the fork's behaviour: csinsc.py there has a
+    `while csinscTools.isSpeaking(): continue` loop that is commented out. An
+    earlier version of this port waited for the utterance to finish, which
+    changed when the *next* line of a lesson ran.
+
+    The profanity filter and the language table live in the host bridge, where
+    the fork keeps them - see runtime-pyodide.js. An unknown language raises.
+    """
     global firstUtterance
     # a delay on the first utterance lets the speech engine load lazily
     if firstUtterance:
-        block(_host.saySomething("", voice, language))
+        _host.saySomething("", voice, language)
         sleep(1)
         firstUtterance = False
-    block(_host.saySomething(str(text), voice, language))
+    _host.saySomething(str(text), voice, language)
 
 
 def listen(t):

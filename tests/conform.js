@@ -216,6 +216,16 @@ var Conform = (function () {
         // interpreter says nothing. (Within one interpreter the cut is
         // deterministic, so those are still diffed.)
         if (crossRuntime && run.truncated) {
+            // ...but if the golden raised, the check below was going to ask
+            // "does it still raise?", and being cut short means we never found
+            // out. Reporting that as `smoke` made it look verified and silently
+            // moved the failure count: intro.v2/answers/0604a (the quit() menu
+            // loop) sits on the boundary, so two identical passes reported
+            // 1 fail and 2 fail with no code change between them. Name it.
+            if (raisedAnError(golden)) {
+                return { verdict: "unchecked",
+                         note: "cut short before the raise check - not verified" };
+            }
             return { verdict: "smoke", note: "run was cut short - tail not comparable" };
         }
 

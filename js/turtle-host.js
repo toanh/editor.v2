@@ -29,6 +29,7 @@ var TurtleHost = (function () {
     var fillBuf = [];
     var listeners = [];
     var timers = [];
+    var proxies = [];    // Python callbacks, destroyed in unbind()
 
     // Transcribed from src/lib/turtle.js. Every entry is a closed polygon in
     // turtle-local coordinates, drawn with x negated (see drawTurtle).
@@ -106,6 +107,14 @@ var TurtleHost = (function () {
         listeners = [];
         timers.forEach(function (t) { window.clearTimeout(t); });
         timers = [];
+        // Every callback Python handed over is a Pyodide create_proxy, and those
+        // are not collected on either side. Destroy them with the listeners.
+        proxies.forEach(function (fn) {
+            if (fn && typeof fn.destroy === "function") {
+                try { fn.destroy(); } catch (e) { /* already gone */ }
+            }
+        });
+        proxies = [];
     }
 
     function on(el, type, fn) {
@@ -268,12 +277,14 @@ var TurtleHost = (function () {
         listen: function () { try { target.focus(); } catch (e) {} },
 
         onKey: function (fn, down) {
+            proxies.push(fn);
             on(target, down ? "keydown" : "keyup", function (e) {
                 try { fn(e.key); } catch (x) { console.error(x); }
             });
         },
 
         onClick: function (fn) {
+            proxies.push(fn);
             on(target, "mousedown", function (e) {
                 var r = target.getBoundingClientRect();
                 var x = (e.clientX - r.left) * world.xScale + world.llx;
@@ -283,6 +294,7 @@ var TurtleHost = (function () {
         },
 
         setTimer: function (fn, ms) {
+            proxies.push(fn);
             timers.push(window.setTimeout(function () {
                 try { fn(); } catch (x) { console.error(x); }
             }, Math.max(0, ms | 0)));

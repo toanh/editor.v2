@@ -21,7 +21,9 @@
   td.v { font-weight: bold; white-space: nowrap; }
   .pass, .recorded { color: #197a19; }
   .fail, .error, .timeout { color: #c00; }
-  .new { color: #b8860b; }
+  /* Not a failure, but not verified either - see the verdict table in
+     tests/README.md. Amber so it cannot be skimmed past as a pass. */
+  .new, .unchecked { color: #b8860b; }
   .tags { color: #888; font-size: 8pt; }
   .note { color: #555; }
   tr.row:hover { background: #fbfbe8; cursor: pointer; }

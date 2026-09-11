@@ -8,15 +8,17 @@ A browser-based Python editor for schools (CS in Schools / Code for Schools). Py
 
 ## Migration in progress
 
-The repo is midway through replacing both halves: **Ace → Monaco** (done) and **Skulpt → Pyodide** (not started). The full plan, including the decisions already taken and the verification results, is at `~/.claude/plans/carefully-plan-for-the-precious-crown.md`.
+The repo is midway through replacing both halves: **Ace → Monaco** (done) and **Skulpt → Pyodide** (in progress, behind `?runtime=pyodide`). Neither original is being thrown away — see the note under the table. The full plan, including the decisions already taken and the verification results, is at `~/.claude/plans/carefully-plan-for-the-precious-crown.md`.
 
 | Phase | State |
 | --- | --- |
 | 0 — introduce Editor/Runtime seams, host registry, async boot, conformance harness | done |
 | 1 — Monaco replaces Ace | done |
-| 2 — Pyodide behind `?runtime=pyodide`, Skulpt still default | **in progress** — runtime core, `csinsc`/`goodies`, `goto`/`label`, `pyangelo` and `turtle` done; micro:bit, speech, webcam, babylon, builtin-PyAngelo and `?compiled=1` still to do |
+| 2 — Pyodide behind `?runtime=pyodide`, Skulpt still default | **nearly done** — runtime core, `csinsc`/`goodies`, `goto`/`label`, `pyangelo`, `turtle`, `microbit`, `speech`, `babylon`, `perlin`, builtin PyAngelo with `sprite`/`vector` all ported. Left: webcam / Teachable Machine (still raise "add `&runtime=skulpt`") and `?compiled=1` (blocked on the original `.py` sources). Hardware and visual checks outstanding |
 | 3 — flip the default; `?runtime=skulpt` becomes the escape hatch | — |
-| 4 — delete Skulpt, Ace, and the fork | — |
+| 4 — delete Skulpt, Ace, and the fork | **on hold — do not start** |
+
+**Phase 4 is held by decision, not by scheduling.** A manual pass over the whole editor comes first, and the ability to switch back and compare the two runtimes is wanted for the long term. So **`?runtime=skulpt` and `?editor=ace` are permanent product features, not transitional scaffolding** — keep them working and test them like anything else that ships. `js/runtime-skulpt.js`, `js/editor-ace.js`, `js/skulpt*.js`, `js/ace*.js`, `build.bat`, `js/copy_over.bat` and the `../skulpt` fork all stay. Phase 3 still flips the default, which a URL parameter undoes; deleting the other implementation would not be undoable, and it would also delete the oracle every gate here compares against.
 
 Everything is structured around that: the two facades exist so both backends can coexist, and the test suites exist so "we didn't break the curriculum" is measured rather than asserted. **Run the conformance suite after any change** — see Testing below.
 
@@ -59,9 +61,9 @@ Everything hangs off two facades, so Ace/Monaco and Skulpt/Pyodide are interchan
 | --- | --- |
 | [js/editorapi.js](js/editorapi.js) | `Editor` — `create` (async, returns a promise), `getValue`, `setValue`, `revealLine`, `setStepLine`, `clearStepLine`, `setReadOnly`, `setTheme('dark'\|'light')`, `layout`, `registerCompletions`, `dispose` |
 | [js/editor-monaco.js](js/editor-monaco.js) | Monaco backend (default) |
-| [js/editor-ace.js](js/editor-ace.js) | Ace backend, lazy-loaded only for `?editor=ace`; deleted in Phase 4 |
+| [js/editor-ace.js](js/editor-ace.js) | Ace backend, lazy-loaded only for `?editor=ace`. **Stays** — Phase 4 is on hold |
 | [js/runtime.js](js/runtime.js) | `Runtime` — `boot`, `run(opts)`, `stop`, `isStopped`, `teardown`, `formatError`, `setWebServiceURL`, `installHostName` |
-| [js/runtime-skulpt.js](js/runtime-skulpt.js) | Skulpt backend; deleted in Phase 4 |
+| [js/runtime-skulpt.js](js/runtime-skulpt.js) | Skulpt backend. **Stays** — Phase 4 is on hold, and it is the oracle every cross-runtime gate compares against |
 | [js/hostapi.js](js/hostapi.js) | `Host` — registry of the 56 Python-visible names `console.js` provides |
 
 **Nothing outside a backend may touch `Sk.*` or `ace`/`monaco` directly.** `editor.js` has three remaining `Sk.` references (the Babylon bridge, `animationFrameRequest`, `Sk.onAfterCompile`); those are Phase 2 work.
@@ -165,15 +167,24 @@ Those fetches all have to succeed or the runtime does not start, so `fetchText` 
 
 Not yet ported, and raising a clear "add `&runtime=skulpt`" message: the webcam and Teachable Machine functions.
 
+**`say()` carries two protections that are invisible without a microphone**, and the first version of this bridge had neither — a regression that reached the 11+ files using speech. Both live in `runtime-pyodide.js`, where the fork keeps them:
+
+- **A profanity filter.** This is a product for primary schools and the computer says whatever a child types, so matching text is replaced with a jokey refusal. The 77-word list stays base64-encoded, as in the fork — the point is that the source file is not itself full of slurs.
+- **A 60-language table.** `say(text, language="french")` must actually speak French, and an unknown language must raise rather than silently speaking English.
+
+`say()` is also **fire-and-forget**: the fork's `csinsc.py` has a `while csinscTools.isSpeaking(): continue` loop that is commented out, so the Python call returns immediately and the browser queues the utterance. An earlier version of this port waited for the utterance to end, which changed when the *next* line of a lesson ran. `tests/pyodide-only/speech_safety.py` intercepts `speechSynthesis.speak` so all of this is checkable with nothing audible.
+
 **`goto` / `label`** work on CPython — see [js/py/gotolabel.py](js/py/gotolabel.py). `js/pygmi.js` rewrites both spellings (`goto .foo` and `goto foo`) into `goto.foo`, which is already legal Python: an attribute access on a name. An `ast` pre-scan builds `{goto_line: label_line}` and raises Skulpt's own SyntaxErrors for a duplicate or undefined label. A `sys.settrace` hook then assigns `frame.f_lineno` to jump — **at the goto's own line, before it executes**, not on the next line event, because `demos/snake.py` ends with `goto .here` as its final line and there would be no next event.
 
 The yield that makes goto-driven frame loops animate lives in `label.__getattr__` — ordinary Python, not the trace callback — and is locked to one animation frame, so a text adventure hitting thirty labels between keystrokes does not burn thirty frames. Tracing is installed only for programs that actually contain a goto.
 
 Which spelling a program gets is `Runtime.normaliseGotoLabels(code)`: Skulpt's grammar wants the dot removed, CPython wants it added.
 
-**Gate result — the whole automatable corpus under Pyodide: 168 pass, 57 smoke, 1 fail.** The single failure is the accepted float-repr divergence above. The 57 smokes are `random`/`time`-driven files plus text adventures the harness has to cut short at 20s.
+**Gate result — the whole automatable corpus under Pyodide: 175 pass · 42 unchecked · 7 smoke · 2 fail.** Both failures are the accepted divergences below, and the tally is now stable. It was drifting between 1 and 2 failures until Pyodide runs stopped using `--virtual-time-budget` (see Testing): real time removed the flakiness *and* six files' worth of truncation, so `intro.v2/answers/0604a` now reports its `SystemExit` divergence honestly instead of hiding behind `unchecked`.
 
-**Second accepted divergence, no longer a failure:** Skulpt reported `exit()` as a red `SystemExit` error. CPython exits normally, which is correct — a student typing "3 to quit" no longer sees an error.
+**Read the 42 `unchecked` as the real coverage limit of this gate.** They are interactive programs — menu loops, text adventures — whose golden raised, and which the harness cut short (60 inputs or 20s) before it could ask whether they still raise under CPython. They used to be counted as `smoke`, which reads as "ran fine"; splitting them out was the only way to stop a shrinking failure count looking like an improvement. `intro.v2/answers/0604a` sat exactly on that boundary and reported `smoke` in one pass and `fail` in the next with no code change between them — moving Pyodide to real time settled it. Only **7** files are genuine smokes (`random`/`time`-driven, text not comparable). Anything relying on error behaviour in those 42 files is unverified under Pyodide, and that matters for Phase 3.
+
+**Second accepted divergence:** Skulpt reported `exit()`/`quit()` as a red `SystemExit` error. CPython exits normally, which is correct — a student typing "3 to quit" no longer sees an error. This is the one that intermittently hides behind a `smoke` verdict, above.
 
 ### Loop yielding — do not remove this
 
@@ -210,6 +221,52 @@ Three deliberate departures, all commented at their definitions: `colormode()` a
 **`turtle.goto(x, y)` is a `SyntaxError` under Skulpt and works under Pyodide.** The fork added `goto <label>` as a real grammar statement, which makes `goto` a reserved word: `goto(100, 100)` will not parse, while `setpos()` and `setposition()` — the same function under different names — are fine. Nothing in the curriculum calls it, for that reason. The mirror image also holds: under Pyodide `from turtle import *` binds `goto` to turtle's function and shadows the `_Goto` object `gotolabel.py` installs, so a program cannot use `goto .label` *and* import turtle. It is mutually exclusive under both runtimes, just in opposite directions, and no curriculum file does both.
 
 Frame pacing goes through the prelude's `block(_host.frameYield())`, the same yield `goto` and the loop hook use, so Stop reaches a turtle program normally. Key and timer callbacks arrive on a plain DOM event where there is no suspendable stack, so `_can_block()` (`pyodide.ffi.can_run_sync`) degrades those to instant, unyielded motion rather than raising.
+
+### `from microbit import Microbit`
+
+[js/py/microbit.py](js/py/microbit.py) over [js/microbit-host.js](js/microbit-host.js). The fork's `src/lib/microBit.js` is 828 lines but **contains no `Sk.` before line 449** — the BLE UUIDs, the `uBit` state class and the notification decoding are plain JavaScript and port across essentially verbatim. Only the Skulpt class wrapper is replaced.
+
+**Every busy-wait had to become a yield, and this is the module where it matters most.** The fork is full of `while self.uBit.isGATTWriting(): continue`, which only terminates because Skulpt injected a suspension into every `while`. Under CPython that spin holds the main thread, so the GATT write it is waiting for can never complete and the program deadlocks against itself. All of them now go through `_tick()` → one animation frame. The same applies to `waitForButtonA`, `waitForButtonClicked` and the connection loop.
+
+Two deliberate departures: `getCompass()` returns **`"N"`** for bearings either side of zero (the fork returns `"NW"`, which is simply wrong), and `startRecordData()`/`stopRecordData()` raise a "add `&runtime=skulpt`" message — they drove a `.modal` element that does not exist in this editor's HTML, so they would have thrown on their first line anyway, and no curriculum file calls them.
+
+**43 curriculum files import this, and none of them can be checked without a board.** What is verified: `tests/pyodide-only/microbit_logic.py` covers the compass arithmetic across every boundary and the failed-pairing path, and the LED bit-packing was checked exhaustively against the fork's algorithm for all 32 row patterns. Everything else — pairing, buttons, the screen, the sensors — needs a human with a flashed micro:bit.
+
+### The small modules
+
+| Module | Notes |
+| --- | --- |
+| [js/py/speech.py](js/py/speech.py) | `say`/`listen` over the host's speech synthesis and recognition. **Deliberately not aliases of the `csinsc` ones** — `csinsc.say()` sends a silent warm-up utterance and sleeps a second first, and takes a `language`; `speech.say()` does neither, matching the fork. All 11 curriculum files do `from speech import *`, so `__all__` keeps that to the two taught names instead of leaking `block` |
+| [js/py/babylon.py](js/py/babylon.py) | The 3D scene description. The fork's `babylonjsWrapper.js` was five one-line forwards to `editor.js` globals, so it has no counterpart — the calls go straight to `js.*` |
+| [js/py/perlin.py](js/py/perlin.py) | p5.js's Perlin noise, ported to **Python** rather than kept as JS: it is pure arithmetic with no browser in it. Verified against the fork's JavaScript to 12 decimal places |
+| [js/py/sendsms.py](js/py/sendsms.py) | Raises. It calls `csinsc.sendsms`, which is **commented out in the fork**, so it has raised `AttributeError` for as long as it has existed. Now it says so |
+
+**`babylon.py` is the one to understand before changing.** The Python code never touches Babylon: it builds objects describing what is wanted, and `startBabylon()` ships the lot in one go, because the scene does not exist while the student's code runs. That is why references become *names* on the Python side — `sphere.material = someMaterial` crosses over as `"BObj2"` — and why `babylonCreateScene()` in `editor.js` needs two passes. `Sphere.bObjType` stays `"Mesh"`: `editor.js` dispatches on `bObjType` first and `meshType` second, so it is load-bearing, not an oversight.
+
+`editor.js`'s `addObject()` now accepts either interpreter's shape — a Skulpt instance (attributes in `$d`, needing `remapToJs`) or the plain object Pyodide converts `__dict__` into. That removes one of the three remaining `Sk.` references from `editor.js`.
+
+Two things that would silently produce an empty scene: `to_js()` makes a **`Map`** unless given `dict_converter=js.Object.fromEntries`, and `bObj.bObjType` on a Map is `undefined`; and the fork's `while True: pass` at the end of `startBabylon()` must stay a wait — returning would let the editor treat the program as finished and tear the scene down — but it has to be a *yielding* wait or Babylon's render loop never runs.
+
+**Perlin needed two JavaScript semantics preserved**: `<<` on a JS number is a 32-bit *signed* shift and Python's ints do not wrap, so `_i32()` puts that back; and the seeded LCG is reproduced rather than swapped for `random.seed()`, so a sketch drawn from noise looks identical under both runtimes.
+
+**What is checked, and what is not.** `speech` needs a microphone and `babylon` needs WebGL, so neither can be compared against Skulpt in a headless browser. `tests/pyodide-only/` covers what does not need either: `perlin_values.py` matches the fork's JavaScript to 12 decimal places; `babylon_scene.py` builds `demos/vr.py`'s scene, intercepts the handover and checks the exact description that crosses over — all 17 attributes `babylonCreateScene()` reads are present, with references resolved to names; `speech_sendsms.py` pins the module surface. **Nobody has yet seen the 3D scene render or heard the speech synthesiser** — those are manual checks.
+
+### Builtin PyAngelo (no import — `setCanvasSize()` and friends)
+
+[js/py/pyangelo_builtins.py](js/py/pyangelo_builtins.py) over [js/pyangelo-builtin-host.js](js/pyangelo-builtin-host.js), with [js/py/sprite.py](js/py/sprite.py) and [js/py/vector.py](js/py/vector.py) on top. The Processing-flavoured API from the fork's `src/builtin_pyangelo.js` — 1957 lines there, most of it Skulpt argument checking; the drawing itself is thin canvas work. **No curriculum file uses any of it.** Its load-bearing members, `sleep` and `clear`, are already provided by the prelude and `console.js`, and deliberately not overridden here.
+
+**These are builtins, not a module, and when they are installed matters.** The API defines `RED`, `BLUE`, `YELLOW` and friends as *integers*, while `console.js` defines the same names as the console's escape strings. The fork only installs its versions inside `preparePage()` — i.e. when a program calls `setCanvasSize()` — so the two colour systems never coexist. The port does the same: `console.js`'s `setCanvasSize` calls `Runtime.setupBuiltinPyangelo()`, which runs `pyangelo_builtins.install()`. Measured identical under both runtimes: after `setCanvasSize(400, 300)`, `RED` is `2`. Installing these at boot would silently break every program that prints in colour.
+
+The one exception: **`CARTESIAN` and `JAVASCRIPT` are hoisted into the prelude.** Otherwise `setCanvasSize(600, 400, CARTESIAN)` cannot name the constant its own documentation tells you to use, because the call is what defines it — the fork has that hole, and students work around it by taking the default. Nothing else defines those two names, so hoisting them is safe.
+
+Two Pyodide traps this module hit, both silent because the host catches the error:
+
+- **A Python callable handed to JavaScript as an argument is destroyed when that call returns.** `mouseX`/`mouseY` must read as plain variables, so the host calls a Python callback from each mouse event — and the plain callable was already dead by the first event. It must be `create_proxy(fn)`, and the proxy then has to be `destroy()`ed explicitly or every run leaks one; the hosts do that when they unbind. **Turtle's `onkey`/`onclick`/`ontimer` had the identical bug**, unnoticed because no curriculum file uses them. Measured: calling a stored plain callable raises `JsException`; a `create_proxy` one works.
+- **`null` from JavaScript is `JsNull` in Python, not `None`** — the same bug the pyangelo module had. The host passed `null` for "not this field", so every mousemove reset `mouseIsPressed` to False and a press failed on `int(JsNull)`. Pass `undefined`.
+
+`measureText()` returns the full metrics record as a dict, not just a width, because `sprite.py`'s `TextSprite` sizes itself from `actualBoundingBoxLeft`/`Right`/`Ascent`/`Descent`. `vector.py` fixes two fork bugs that no working program could depend on: `__radd__` referenced an undefined name (so `sum()` of vectors raised), and `__div__` is the Python 2 spelling that `/` never reaches. `dist()` and `mapToRange()` return floats (`5.0`) where Skulpt returned ints — CPython true division, the same class as the float-repr divergence.
+
+**Checked by `tests/pyodide-only/builtin_pyangelo.py`**, which drives every shape, the matrix stack, all modes, images' and sounds' error paths, `vector` and `sprite`, and dispatches *real* mouse and key events to prove the callback path works. `turtle_events.py` does the same for turtle's handlers. **Nobody has looked at what it draws** — that is a manual check.
 
 ## The Skulpt fork (`../skulpt`)
 
@@ -275,6 +332,8 @@ Three suites, all static pages driven by headless Chrome:
 | `tests/urlmodes.html` | `?code=`, localStorage, headless and button-visibility — the load paths the corpus never reaches, because everything it runs arrives via `?project=` |
 | `tests/hostnames.html` | Every classroom builtin as actually bound. 53 of the 56 appear in no curriculum file, so nothing else vouches for them |
 | `tests/pygmi.html` | The source-rewriting passes in `pygmi.js`, unit-tested. The only fully interpreter-independent part of the pipeline, and the one the corpus cannot reach |
+| `tests/check-combos.sh` | All four editor × runtime combinations. The full run only ever exercises one of them, and Phase 4 being on hold makes the other three supported |
+| `tests/check-pyodide.sh` | Modules that cannot be compared against Skulpt at all (hardware, and behaviour deliberately corrected), diffed against a checked-in `.expected` |
 
 ### Running the browser — hard-won details
 
@@ -283,14 +342,15 @@ These cost hours to diagnose twice, because **two unrelated problems produce the
 - **Chunk the corpus. It is not optional.** Each file gets its own iframe carrying a full editor (Skulpt + Monaco + babylon + tf.js) and one browser process reliably dies past ~50 of them. Measured: **40 files finish in 14s; 60 in a single process hang indefinitely with no error.** `run-conformance.sh` gives each chunk a fresh browser; default chunk **20** is reliable, 40 usually works. This is a harness constraint only — the app creates one editor per page.
 - **Check the file count, not just the failure count.** A dropped chunk lowers `TOTAL` rather than reporting a failure, so "0 failures" can silently mean "of the 206 we ran". `run-conformance.sh` retries each chunk once and asserts the total, exiting non-zero if it is short — but if you drive `conform-cli.html` by hand, verify the count yourself.
 - **Always pass a unique `--user-data-dir`.** A stale Chrome profile left over from an interrupted run hangs the next one in exactly the same way. Use `--user-data-dir="$(mktemp -d)"` or append `$(date +%s)`.
-- **Use `--virtual-time-budget`** (e.g. `3600000`) so `sleep()` and the harness's 20s run timeout cost no wall-clock time.
+- **Use `--virtual-time-budget`** (e.g. `3600000`) so `sleep()` and the harness's 20s run timeout cost no wall-clock time — **for Skulpt only.** A Pyodide run must use real time (`run-conformance.sh` switches to `cdp-run.js` automatically when `EXTRA` names it). Virtual time only advances while the page is idle, and every Pyodide yield goes through `requestAnimationFrame`, so a program suspended on rAF stalls virtual time and never gets its frame. Measured: the same chunk hung 322s under virtual time and finished in 30/30/31s over CDP. Skulpt is immune because `killableWhile` yields through macrotasks.
 - **Never `taskkill /F /IM chrome.exe`** to clean up — that kills the developer's own browser too. Kill by PID, or let `timeout` handle it. Ours are the processes whose command line carries `--headless` and a temp `--user-data-dir`; filter on that before killing anything.
-- **Anything that can run past ~2 minutes must print a line per item, and something must check on it automatically** — intending to look periodically does not work. A slow run and a hung one are indistinguishable here; `inquisitive/turtle/y5l3d1` legitimately takes 90s per runtime. Three traps, all hit in one session, and each one makes the monitoring *look* set up while telling you nothing:
+- **Anything that can run past ~2 minutes must print a line per item, and something must check on it automatically** — intending to look periodically does not work. **The watcher's own thresholds must honour the rule:** check every 60s and probe for life after 2 minutes without a new line. A watcher that checked every 90s and only probed after three quiet beats looked compliant and actually waited 4½ minutes. A slow run and a hung one are indistinguishable here; `inquisitive/turtle/y5l3d1` legitimately takes 90s per runtime. Three traps, all hit in one session, and each one makes the monitoring *look* set up while telling you nothing:
   - **Piping through `tail`/`head` buffers the whole stream**, so the log stays empty until the run ends and any watcher pointed at it can never fire.
   - **Orphaned headless browsers from an earlier killed run** silently throttle everything after them — twelve of them turned a 2-minute pass into half an hour, and chunks dropped back to 5s the moment they were killed. Sweep before starting.
   - **Measuring CPU by filtering on `--headless` measures the browser process**, which is idle by design while the renderer children work. It reported `+0s` for a healthy run; the "stalled" chunk finished in 21s when re-run alone. Sum the whole process tree, and trust log growth over any process metric.
 
   Full recipe in [tests/README.md](tests/README.md#long-runs-the-two-minute-rule).
+- **A machine that sleeps mid-run kills it, and the per-chunk `timeout` does not catch that** — it is wall-clock and does not fire sensibly across a suspend. Seen here: a browser alive for 4h15m holding 9s of CPU with the log frozen on one chunk. The tell is the *age* of the oldest process against how long the run should have taken. Kill the browsers and the driver and start over; a partial log is worthless because you cannot tell which chunks predate the suspend.
 - **Don't run anything else against the browser while a suite is running**, and **never edit a script or page that a run is currently using** — bash reads scripts by byte offset, and the probe page is re-fetched per file. Measured: `demos/turtle_demo` passed twice standalone and then timed out inside the suite purely from CPU contention with two extra probe browsers.
 - `with=editor%3Dace` on `conform-cli.html` runs the whole corpus against the Ace fallback; `with=runtime%3Dskulpt` will do the same for the interpreter in Phase 2.
 
@@ -319,7 +379,7 @@ Read in `editor.js`; embedders drive the whole UI through these.
 | `compiled` | Source is pre-compiled Skulpt JS; implies headless, uses `Sk.onAfterCompile` to swap in the stored code |
 | `wheels` | Enable the pygmify beginner dialect |
 | `light` | Light editor theme instead of Monokai |
-| `editor=ace` | Fall back to Ace, lazy-loaded. Goes away in Phase 4 |
+| `editor=ace` | Fall back to Ace, lazy-loaded. A supported escape hatch, not scaffolding |
 | `norun`, `nostep`, `nosave`, `nosnap`, `nocanvas`, `nofs` | Hide the corresponding buttons/panes |
 | `url`, `piskel` | Show the URL / Piskel buttons |
 | `webservice=` | Override the codestore base URL (e.g. `http://localhost:3000`) for testing |
