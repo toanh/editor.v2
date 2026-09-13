@@ -2,17 +2,25 @@
 
 These are *builtins*, not a module: in the fork they are registered into
 `Sk.builtins`, so a student writes `background(0, 0, 0)` with no import at all.
-`install()` reproduces that by binding them into Python's `builtins`, and it is
-called from `setCanvasSize()` - which is exactly when the fork's `preparePage()`
-runs `Sk.PyAngelo.reset()`.
+They arrive in two halves, at two different times, exactly as in the fork:
 
-**That timing is load-bearing.** This API defines `RED`, `BLUE`, `YELLOW` and
-friends as *integers*, while `console.js` defines the same names as the
+  * **Functions and classes, at boot** - `install_functions()`. The fork
+    registers them with top-level `Sk.builtins["loadSound"] = ...`, so they
+    exist in every program whether or not it opens a canvas. demos/pong.py
+    depends on it: it calls `loadSound()` and `stopAllSounds()` beside
+    `from pyangelo import *` and never calls `setCanvasSize()`, and it died
+    with a NameError under Pyodide while these waited for a canvas.
+  * **Constants, when a canvas opens** - `install()`, called from
+    `setCanvasSize()`, which is when the fork's `preparePage()` runs
+    `Sk.PyAngelo.reset()`.
+
+**That second timing is load-bearing.** This API defines `RED`, `BLUE`, `YELLOW`
+and friends as *integers*, while `console.js` defines the same names as the
 pseudo-ANSI escape strings the console understands. Both cannot be true at once.
-The fork resolves it by only installing these when a program opens a canvas, so
-the two colour systems are mutually exclusive and whichever the program asked
-for wins. Installing them at boot instead would silently break every program
-that prints in colour.
+The fork resolves it by only installing the constants when a program opens a
+canvas, so the two colour systems are mutually exclusive and whichever the
+program asked for wins. Installing them at boot would silently break every
+program that prints in colour.
 
 Drawing itself is in js/pyangelo-builtin-host.js. This file is the Python face:
 argument defaults, type coercion, and the constants.
@@ -303,6 +311,20 @@ class Colour:
     __str__ = __repr__
 
 
+class Point:
+    """An x, y pair. Registered by the fork beside Colour and Image, and
+    missing from this port until pong's NameError led back here."""
+
+    def __init__(self, x=0, y=0):
+        self.x = x
+        self.y = y
+
+    def __repr__(self):
+        return "Point(%s, %s)" % (self.x, self.y)
+
+    __str__ = __repr__
+
+
 def getPixelColour(x, y):
     d = _c.getPixelColour(x, y)
     return Colour(int(d[0]), int(d[1]), int(d[2]), int(d[3]))
@@ -449,7 +471,7 @@ _NAMES = [
     "fill", "noFill", "stroke", "noStroke",
     "line", "circle", "ellipse", "arc", "triangle", "quad", "point", "rect",
     "beginShape", "vertex", "endShape",
-    "Colour", "getPixelColour", "Image", "drawImage",
+    "Colour", "Point", "getPixelColour", "Image", "drawImage",
     "loadSound", "playSound", "stopSound", "pauseSound", "stopAllSounds",
     "isKeyPressed", "wasKeyPressed",
     "setTextSize", "setTextColour", "setHighlightColour",
@@ -457,8 +479,23 @@ _NAMES = [
 ]
 
 
+def install_functions():
+    """Bind the functions and classes into builtins. Called once, at boot.
+
+    Before console.js's Host names are bound, so its versions of any shared
+    name win, as they do under Skulpt.
+    """
+    import builtins
+    g = globals()
+    for name in _NAMES:
+        if callable(g[name]):
+            setattr(builtins, name, g[name])
+    builtins.loadImage = Image
+
+
 def install():
-    """Bind everything into builtins, as Skulpt registers them globally."""
+    """Bind everything into builtins, constants included. Called when a
+    program opens a canvas - the fork's Sk.PyAngelo.reset()."""
     import builtins
     g = globals()
     for name in _NAMES:

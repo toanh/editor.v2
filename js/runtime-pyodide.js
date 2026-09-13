@@ -19,7 +19,7 @@
 
 var PyodideRuntime = (function () {
     var PY_LIB = "/pyeditor";   // where js/py/*.py is mounted inside Pyodide
-    var PY_LIB_VERSION = 21;     // bump when any js/py/*.py changes
+    var PY_LIB_VERSION = 24;     // bump when any js/py/*.py changes
 
     var py = null;              // the Pyodide API object
     var prelude = null;         // the imported prelude module
@@ -438,6 +438,10 @@ var PyodideRuntime = (function () {
 
                 prelude = py.pyimport("prelude");
                 prelude.install();
+                // Builtin PyAngelo's functions are permanent builtins in the
+                // fork; only its constants wait for setCanvasSize(). Bound
+                // before the Host names, so console.js's versions still win.
+                py.pyimport("pyangelo_builtins").install_functions();
 
                 self.flushHostNames();
                 return py;

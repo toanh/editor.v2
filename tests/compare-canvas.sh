@@ -13,6 +13,9 @@
 #             they do.
 #   api       8 hand-written files from tests/turtle-api/, ~3 min. The turtle
 #             functions no curriculum file calls.
+#   pyangelo-api  hand-written files from tests/pyangelo-api/, static pictures
+#             of the pyangelo module's argument forms - numeric colours above
+#             all, which no animating curriculum file could pin down.
 #
 # A turtle picture is drawn at the program's own speed, so the turtle group is
 # slow by construction, not because something has hung - the rainbow in
@@ -94,7 +97,7 @@ run_group() {  # target kind files...
     local target="$1" kind="$2"; shift 2
     printf "%-32s %-10s %-10s %s\n" "FILE ($target)" SKULPT PYODIDE VERDICT
     for f in $*; do
-        if [ "$kind" = "codeurl" ]; then src="codeurl=tests/turtle-api/$f.py"; else src="project=$f"; fi
+        if [ "$kind" = "codeurl" ]; then src="codeurl=${CODEURL_DIR:-tests/turtle-api}/$f.py"; else src="project=$f"; fi
         sk=$(probe "$src" skulpt "$target")
         py=$(probe "$src" pyodide "$target")
         line=$(SK="$sk" PY="$py" F="$f" node -e '
@@ -151,6 +154,13 @@ if [ "$GROUP" = "all" ] || [ "$GROUP" = "api" ]; then
     # Every one of them sets speed(0), so these are quick.
     PROBE_TIMEOUT="${API_TIMEOUT:-120}"
     run_group turtle codeurl $API_FILES
+fi
+
+PYANGELO_API_FILES="${PYANGELO_API_FILES:-$(ls tests/pyangelo-api/*.py 2>/dev/null | sed 's|.*/||; s|\.py$||' | sort)}"
+
+if [ "$GROUP" = "all" ] || [ "$GROUP" = "pyangelo-api" ]; then
+    PROBE_TIMEOUT="${API_TIMEOUT:-120}"
+    CODEURL_DIR=tests/pyangelo-api run_group pyangelo codeurl $PYANGELO_API_FILES
 fi
 
 if [ "$fail" -eq 0 ]; then echo "no blank or errored canvases"; else echo "$fail problem(s)"; fi

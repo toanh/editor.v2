@@ -1,0 +1,2 @@
+while loop not rate-limited: True
+browser kept painting: True

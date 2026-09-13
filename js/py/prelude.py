@@ -48,23 +48,50 @@ def check_stop():
 _check_stop = check_stop
 
 
-# Yield to the browser at most once per animation frame. Both the loop-back-edge
-# hook and `label` call this; a program hitting it thousands of times a second
-# must not spend a frame on each.
-_FRAME_MS = 16
-_last_yield = [0.0]
+# --- pacing ------------------------------------------------------------------
+# When does a running program give the browser a turn? The loop back-edge hook
+# (yielding.py) and `label` (gotolabel.py) both ask maybe_yield(), and every
+# blocking call restarts the clock.
+#
+# One rule: once the program has held the main thread for _SLICE_MS since the
+# browser last had a turn, it waits for the next animation frame. The clock
+# restarts when that wait *returns*.
+#
+# It used to be stamped before the wait. The wait itself lasts about a frame,
+# so by the time the program resumed its budget had always run out, and most
+# back-edges yielded again straight away. demos/snake.py polled its keys 81
+# times a second instead of thousands, moved late and unevenly (267-301 ms for a
+# 250 ms step) and missed a quarter of quick key taps. Every browser-level
+# metric looked perfect throughout; only instrumenting the game found it.
+#
+# There is deliberately NO loop-rate limit. One was tried - 1500 iterations a
+# second for canvas programs, on the theory that Skulpt throttled its loops and
+# games were tuned against that - and measurement disproved the theory. Skulpt
+# runs an empty canvas `while` loop at ~80,000/s and playerSelection's nine-call
+# body at ~50,000/s. Where a Skulpt game loop was slow (demos/pong.py ~1,000-
+# 1,700/s) that was the cost of Skulpt executing that particular code, which no
+# constant can reproduce: the cap made light loops 30-50x slower than Skulpt and
+# halved tictactoe_ml's training speed. The consequence, accepted: a game that
+# moves a fixed step per loop and was slow under Skulpt runs faster here.
+# tests/pacing/pacing.html with make_variants.py reproduces the snake and pong
+# measurements under either runtime.
+_SLICE_MS = 8.0
+_resumed_at = [0.0]
 
 
 def maybe_yield():
-    now = time.monotonic() * 1000.0
-    if now - _last_yield[0] < _FRAME_MS:
-        return
-    _last_yield[0] = now
-    block(_host.frameYield())
+    """Give the browser a turn if this program has held the thread long enough."""
+    if time.monotonic() * 1000.0 - _resumed_at[0] >= _SLICE_MS:
+        block(_host.frameYield())
+
+
+def _resumed():
+    """The browser just had a turn: restart the slice."""
+    _resumed_at[0] = time.monotonic() * 1000.0
 
 
 def reset_yield_clock():
-    _last_yield[0] = 0.0
+    _resumed_at[0] = time.monotonic() * 1000.0
 
 
 def block(promise):
@@ -77,11 +104,13 @@ def block(promise):
     try:
         result = run_sync(promise)
     except BaseException:
+        _resumed()
         # Stop rejects every in-flight promise, which arrives here as a
         # JsException. Without this the student would get a raw JavaScript
         # traceback instead of "Stopped!" every time they press the button.
         _check_stop()
         raise
+    _resumed()
     _check_stop()
     return result
 

@@ -60,6 +60,9 @@ def clearScreen(color=None, g=None, b=None, a=None):
     _canvas.clearScreen(color, g, b, a)
 
 
+# drawText and printAt accept g, b, a and then ignore them - so does the fork,
+# which passes only the first colour argument on. A numeric colour there keeps
+# the previous fill colour; see colour() in js/pyangelo-host.js.
 def drawText(text, x, y, font=None, color=None, g=None, b=None, a=None):
     _canvas.drawText(text, x, y, font, color)
 
@@ -68,16 +71,18 @@ def printAt(text, col, row, color=None, g=None, b=None, a=None):
     _canvas.printAt(text, col, row, color)
 
 
+# These three do take a full r, g, b, a colour. They used to drop g, b and a
+# here, and the host painted every numeric colour white.
 def drawLine(x1, y1, x2, y2, lineWidth=1, color=None, g=None, b=None, a=None):
-    _canvas.drawLine(x1, y1, x2, y2, lineWidth, color)
+    _canvas.drawLine(x1, y1, x2, y2, lineWidth, color, g, b, a)
 
 
 def drawRect(x, y, width, height, lineWidth=1, color=None, g=None, b=None, a=None):
-    _canvas.drawRect(x, y, width, height, lineWidth, color)
+    _canvas.drawRect(x, y, width, height, lineWidth, color, g, b, a)
 
 
 def fillRect(x, y, width, height, color=None, g=None, b=None, a=None):
-    _canvas.fillRect(x, y, width, height, color)
+    _canvas.fillRect(x, y, width, height, color, g, b, a)
 
 
 def drawImage(imageURL, x, y, width=None, height=None, opacity=1.0):

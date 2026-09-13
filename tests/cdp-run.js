@@ -44,6 +44,19 @@ async function main() {
     const cleanup = () => { try { chrome.kill(); } catch (e) {} };
     process.on("exit", cleanup);
 
+    // A hard stop that does not depend on the page answering. The polling loop
+    // below checks its deadline only *between* CDP calls, and a page whose main
+    // thread is stuck - a synchronous JavaScript loop, or Skulpt building a
+    // 100-million-element list for range(100000000) - never replies to
+    // Runtime.evaluate. The await then never returned, the deadline was never
+    // looked at again, and one probe sat for 19 minutes on a 115 s timeout.
+    const watchdog = setTimeout(() => {
+        console.error("TIMEOUT after " + timeoutMs + "ms (page stopped responding to CDP)");
+        cleanup();
+        try { fs.rmSync(profile, { recursive: true, force: true }); } catch (e) {}
+        process.exit(1);
+    }, timeoutMs + 10000);
+
     const target = await waitForTarget(port, 20000);
     const ws = new WebSocket(target);
     await new Promise((res, rej) => { ws.onopen = res; ws.onerror = rej; });
@@ -62,8 +75,13 @@ async function main() {
         pending.set(myId, res);
         ws.send(JSON.stringify({ id: myId, method, params: params || {} }));
     });
+    // Each evaluate gives up after 5 s rather than waiting for ever; the loop
+    // then re-checks its deadline. A busy page that recovers is polled again.
     const evaluate = async (expr) => {
-        const r = await send("Runtime.evaluate", { expression: expr, returnByValue: true });
+        const r = await Promise.race([
+            send("Runtime.evaluate", { expression: expr, returnByValue: true }),
+            new Promise((res) => setTimeout(() => res({}), 5000))
+        ]);
         return r.result && r.result.result ? r.result.result.value : undefined;
     };
 
@@ -79,6 +97,7 @@ async function main() {
 
     const text = await evaluate(
         "(document.querySelector(" + JSON.stringify(selector) + ")||{}).textContent || ''");
+    clearTimeout(watchdog);
     ws.close();
     cleanup();
     try { fs.rmSync(profile, { recursive: true, force: true }); } catch (e) {}

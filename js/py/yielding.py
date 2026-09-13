@@ -10,8 +10,8 @@ PEP 669 gives the exact equivalent: a JUMP event on every loop back-edge. It is
 far cheaper than Skulpt's version, which cost a full macrotask per iteration.
 
   * Forward jumps return DISABLE, so they are never reported again.
-  * Back-edges yield to the browser - at most once per animation frame - and
-    check whether Stop was pressed.
+  * Back-edges ask the prelude's maybe_yield() whether to give the browser a
+    turn (see the pacing notes there), and check whether Stop was pressed.
   * Events are set per code object with set_local_events, so the stdlib,
     csinsc and everything else the program imports run at full speed.
 

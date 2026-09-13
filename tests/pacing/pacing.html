@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>RUNNING</title>
+<style>
+  body { margin: 0; font: 12px monospace; }
+  #f { border: 0; width: 1000px; height: 700px; }
+  .off { position: absolute; left: -10000px; top: 0; }
+</style>
+</head>
+<body>
+<!--
+  Frame pacing, main-thread responsiveness, and key-tap delivery for ONE program.
+
+    ?project=demos/snake&runtime=pyodide&seconds=6
+    ?codeurl=tests/pacing/tap_program.py&runtime=skulpt&taps=50
+    &offscreen=1   put the editor iframe off-screen, as canvas-probe.html does
+
+  project= runs for `seconds` after the program's render loop appears, then stops
+  it. codeurl= runs until the program ends. taps=<ms> injects key taps of that
+  length ("w", every tapEvery ms for tapFor seconds) on #pyangelo once the
+  render loop is up, and reports how many were injected.
+-->
+<iframe id="f"></iframe>
+<pre id="out">running</pre>
+<script>
+(function () {
+  var q = new URLSearchParams(location.search);
+  var runtime = q.get("runtime") || "skulpt";
+  var project = q.get("project");
+  var codeurl = q.get("codeurl");
+  var seconds = parseFloat(q.get("seconds") || "6");
+  var taps = parseInt(q.get("taps") || "0", 10);
+  var tapEvery = parseInt(q.get("tapEvery") || "250", 10);
+  var tapFor = parseFloat(q.get("tapFor") || "8");
+  var out = document.getElementById("out");
+  var f = document.getElementById("f");
+  if (q.get("offscreen")) { f.className = "off"; }
+
+  var done = false;
+  var win = null;
+  function consoleText() {
+    try {
+      var c = win && win.document.getElementById("console");
+      return c ? c.textContent.replace(/\s+$/, "") : "";
+    } catch (e) { return ""; }
+  }
+  function report(o) {
+    if (done) { return; }
+    done = true;
+    o.runtime = runtime;
+    o.offscreen = !!q.get("offscreen");
+    out.textContent = JSON.stringify(o);
+    document.title = "DONE";
+  }
+  // A timeout still reports what the program printed - otherwise a program that
+  // never ends and a program that never started look identical.
+  setTimeout(function () { report({ error: "timed out", text: consoleText() }); }, 110000);
+
+  function pct(xs, p) {
+    if (!xs.length) { return null; }
+    var s = xs.slice().sort(function (a, b) { return a - b; });
+    return Math.round(s[Math.min(s.length - 1, Math.floor(s.length * p))] * 10) / 10;
+  }
+  function summary(xs) {
+    return { n: xs.length, p50: pct(xs, 0.5), p95: pct(xs, 0.95), p99: pct(xs, 0.99),
+             max: xs.length ? Math.round(Math.max.apply(null, xs) * 10) / 10 : null };
+  }
+
+  try { localStorage.removeItem("__pacing__"); } catch (e) {}
+  var params = "&name=__pacing__&nosave=1&nosnap=1&nofs=1&norun=1&runtime=" + runtime;
+  (codeurl ? fetch("../../" + codeurl).then(function (r) { return r.text(); })
+           : Promise.resolve(null)).then(function (src) {
+    f.src = "../../editor.html?" +
+      (src !== null ? "code=" + encodeURIComponent(src) : "project=" + encodeURIComponent(project)) +
+      params;
+  });
+
+  var went = false;
+  f.onload = function () {
+    var t0 = Date.now();
+    (function poll() {
+      if (done || went) { return; }
+      var w = f.contentWindow, ready = false;
+      try { ready = w && typeof w.runSkulpt === "function" && w.codestring; } catch (e) {}
+      if (!ready) {
+        if (Date.now() - t0 > 30000) { return report({ error: "never loaded" }); }
+        return setTimeout(poll, 60);
+      }
+      go(w);
+    })();
+  };
+
+  function go(w) {
+    if (went) { return; }
+    went = true;
+    win = w;
+    var perf = w.performance;
+    var realRAF = w.requestAnimationFrame.bind(w);
+    var started = null;
+    var frameIntervals = [], lags = [], longtasks = [], cbDur = [];
+    var lastTick = null;
+    var tapsInjected = 0;
+
+    function inWindow(t) {
+      if (started === null || t < started + 1000) { return false; }
+      return codeurl ? true : t <= started + 1000 + seconds * 1000;
+    }
+
+    function markStarted() {
+      if (started !== null) { return; }
+      started = perf.now();
+      if (taps > 0) { startTaps(); }
+    }
+
+    function tick(ts) {
+      if (done) { return; }
+      if (lastTick !== null && inWindow(perf.now())) { frameIntervals.push(ts - lastTick); }
+      lastTick = ts;
+      realRAF(tick);
+    }
+    realRAF(tick);
+
+    // Both pyangelo render loops drain an *activeCommands queue. Skulpt's lives
+    // in its minified stdlib, where that match can fail - hence the fallback
+    // below, which is safe because Skulpt has no boot delay.
+    w.requestAnimationFrame = function (cb) {
+      if (started === null && cb && String(cb).indexOf("ctiveCommands") !== -1) { markStarted(); }
+      return realRAF(function (ts) {
+        var a = perf.now();
+        try { cb(ts); } finally { if (inWindow(a)) { cbDur.push(perf.now() - a); } }
+      });
+    };
+
+    (function lagProbe() {
+      if (done) { return; }
+      var expected = perf.now() + 10;
+      w.setTimeout(function () {
+        var now = perf.now();
+        if (inWindow(now)) { lags.push(now - expected); }
+        lagProbe();
+      }, 10);
+    })();
+
+    try {
+      new w.PerformanceObserver(function (list) {
+        list.getEntries().forEach(function (e) {
+          if (inWindow(e.startTime)) { longtasks.push(e.duration); }
+        });
+      }).observe({ entryTypes: ["longtask"] });
+    } catch (e) {}
+
+    function startTaps() {
+      var from = perf.now() + 1000;
+      function fire(type) {
+        var canvas = w.document.getElementById("pyangelo");
+        canvas.dispatchEvent(new w.KeyboardEvent(type, { key: "w", code: "KeyW", bubbles: true }));
+      }
+      (function one() {
+        if (done) { return; }
+        var now = perf.now();
+        if (now > from + tapFor * 1000) { return; }
+        if (now >= from) {
+          fire("keydown");
+          tapsInjected++;
+          w.setTimeout(function () { fire("keyup"); }, taps);
+        }
+        w.setTimeout(one, tapEvery);
+      })();
+    }
+
+    function finish(stopProgram) {
+      var o = {
+        frameIntervalMs: summary(frameIntervals),
+        framesOver20: frameIntervals.filter(function (x) { return x > 20; }).length,
+        framesOver34: frameIntervals.filter(function (x) { return x > 34; }).length,
+        timerLagMs: summary(lags),
+        longTasks: { n: longtasks.length,
+                     max: longtasks.length ? Math.round(Math.max.apply(null, longtasks)) : 0 },
+        rafCallbackMs: summary(cbDur),
+        tapsInjected: tapsInjected
+      };
+      try {
+        var c = w.document.getElementById("console");
+        o.text = c ? c.textContent.replace(/\s+$/, "") : "";
+      } catch (e) {}
+      if (stopProgram) { try { w.stopEditor(); } catch (e) {} }
+      report(o);
+    }
+
+    if (codeurl) {
+      var origStop = w.stopSkulpt;
+      w.stopSkulpt = function () {
+        var r = origStop.apply(this, arguments);
+        setTimeout(function () { finish(false); }, 0);
+        return r;
+      };
+    } else {
+      (function waitEnd() {
+        if (done) { return; }
+        if (started !== null && perf.now() > started + 1000 + seconds * 1000) { return finish(true); }
+        setTimeout(waitEnd, 200);
+      })();
+    }
+    w.runSkulpt();
+    if (runtime === "skulpt") { w.setTimeout(markStarted, 1500); }
+  }
+})();
+</script>
+</body>
+</html>

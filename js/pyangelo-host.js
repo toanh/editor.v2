@@ -62,16 +62,43 @@ var PyAngeloHost = (function () {
     COLOURS[30] = "rgba(0, 192, 0, 1)";      // LIGHT_GREEN
     COLOURS[31] = "rgba(192, 192, 192, 1)";  // LIGHT_GREY
     COLOURS[32] = "rgba(255, 192, 203, 1)";  // PINK
+    // The fork's VIOLET and GREY keys: both names are undefined in console.js,
+    // so both assignments wrote to the key "undefined", GREY last. It matters,
+    // because an omitted colour looks that key up - see colour() below.
+    COLOURS["undefined"] = "rgba(127, 127, 127, 1)";
 
     function convY(y) { return canvas.height - y; }
 
-    function colour(c, fallback) {
-        if (c === undefined || c === null) {
-            return COLOURS[fallback === undefined ? ESC.WHITE : fallback];
-        }
+    // The fork's getColour(color, defaultCol, b, a), reproduced quirk for
+    // quirk, because the curriculum's pictures were made with its output. An
+    // earlier version of this port simplified it to "named colour, else a CSS
+    // string, else white" - which painted every numeric colour white:
+    // clearScreen(0, 0, 0, 1) cleared to white, and playerSelection's green box
+    // was a white one. The difference hid for months behind animation in the
+    // one pixel-compared program that used it.
+    //
+    //  * A name from the table is checked first, so a number that happens to be
+    //    a key wins: clearScreen(25, 0, 0, 1) is DARK_RED, not rgb(25, 0, 0).
+    //  * Anything else is concatenated into "rgba(c,g,b,a)". With all four
+    //    numbers that is a real colour. drawText and printAt pass only the first,
+    //    so a number there builds "rgba(255,undefined,undefined,undefined)",
+    //    which the canvas rejects - and a rejected fillStyle leaves the previous
+    //    one in place. demos/pong.py's "PONG" title is drawn exactly that way.
+    //  * An omitted colour reads COLOURS[undefined], because the fork's
+    //    `defaultCol = mod.WHITE` names something the module never defines. So
+    //    an uncoloured drawText or fillRect is grey, not white.
+    //  * A CSS string such as "#ff0000" is not in the table and builds an
+    //    invalid rgba() too. Skulpt strings are objects, so the fork's
+    //    `typeof color === "string"` branch could never fire. No curriculum file
+    //    passes one.
+    //
+    // A Python None arrives here as undefined, the same as an omitted argument
+    // did in Skulpt.
+    function colour(c, g, b, a) {
+        var defaultCol = g;
+        if (c === undefined) { return COLOURS[defaultCol]; }
         if (c in COLOURS) { return COLOURS[c]; }
-        if (typeof c === "string") { return c; }
-        return COLOURS[ESC.WHITE];
+        return "rgba(" + c + "," + defaultCol + "," + b + "," + a + ")";
     }
 
     // --- painters, run from the animation frame -----------------------------
@@ -178,7 +205,10 @@ var PyAngeloHost = (function () {
             // clearScreen flushes the previous frame itself - this is what makes
             // a program that never calls refresh() still animate
             refresh();
-            commands.push([_clearScreen, { fillStyle: colour(c, ESC.BLACK) }]);
+            // The fork meant to default to black here, but its guard compares g
+            // with the *string* "undefined", so every call takes the four-argument
+            // path. No curriculum file calls clearScreen() bare.
+            commands.push([_clearScreen, { fillStyle: colour(c, g, b, a) }]);
         },
 
         drawText: function (text, x, y, font, c) {
@@ -199,24 +229,24 @@ var PyAngeloHost = (function () {
             }]);
         },
 
-        drawLine: function (x1, y1, x2, y2, lineWidth, c) {
+        drawLine: function (x1, y1, x2, y2, lineWidth, c, g, b, a) {
             commands.push([_drawLine, {
                 x1: x1, y1: y1, x2: x2, y2: y2,
                 lineWidth: lineWidth === undefined ? 1 : lineWidth,
-                strokeStyle: colour(c)
+                strokeStyle: colour(c, g, b, a)
             }]);
         },
 
-        drawRect: function (x, y, w, h, lineWidth, c) {
+        drawRect: function (x, y, w, h, lineWidth, c, g, b, a) {
             commands.push([_drawRect, {
                 x: x, y: y, width: w, height: h,
                 lineWidth: lineWidth === undefined ? 1 : lineWidth,
-                strokeStyle: colour(c)
+                strokeStyle: colour(c, g, b, a)
             }]);
         },
 
-        fillRect: function (x, y, w, h, c) {
-            commands.push([_fillRect, { x: x, y: y, width: w, height: h, fillStyle: colour(c) }]);
+        fillRect: function (x, y, w, h, c, g, b, a) {
+            commands.push([_fillRect, { x: x, y: y, width: w, height: h, fillStyle: colour(c, g, b, a) }]);
         },
 
         // Resolves once the image is decoded; the Python side blocks on it, as

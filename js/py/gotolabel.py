@@ -28,10 +28,22 @@ if-chains.
 import ast
 import sys
 import time
+import warnings
 
 from prelude import maybe_yield
 
 USER_FILENAME = "<stdin>.py"
+
+# A jump that leaves a local unbound makes CPython warn, on stderr, in red:
+# "RuntimeWarning: assigning None to 1 unbound local". At module level the
+# locals in question are the hidden iteration variables of comprehensions,
+# which 3.12+ inlines into the enclosing frame - so any goto program with a
+# list comprehension could print it, about a detail the student never wrote and
+# Skulpt never mentioned. The jump itself is correct. Scoped to this module and
+# this message, so no warning a student's own code raises is affected.
+warnings.filterwarnings(
+    "ignore", message=r"assigning None to \d+ unbound local",
+    category=RuntimeWarning, module="gotolabel")
 
 # Statements that introduce a new scope. Skulpt scoped labels per compiler
 # unit, and the curriculum never puts a goto inside one, so a clear error beats

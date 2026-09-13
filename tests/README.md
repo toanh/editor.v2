@@ -30,6 +30,7 @@ current code and the eventual Pyodide build.
 | `check-pyodide.sh` | Runs `pyodide-only/*.py` under Pyodide and diffs each against its checked-in `.expected` file |
 | `pyodide-only/*.py` | Programs that **cannot** be compared against Skulpt: hardware modules that both runtimes can only fail at (differently, on purpose), and behaviour the port deliberately corrects. Each has a `.expected` beside it |
 | `turtle-api/*.py` | Hand-written programs for the turtle functions no curriculum file calls - `circle`, `dot`, `stamp`, `setheading`, `pensize`, `fillcolor`, `write(move=True)`, the shape table, `tracer`/`update`, `degrees`/`radians`, multiple turtles. Not in `projects/` on purpose: they are not curriculum and must not reach the manifest or the goldens |
+| `pyangelo-api/*.py` | Hand-written static pictures of the `pyangelo` module's argument forms, compared against Skulpt by `compare-canvas.sh pyangelo-api`. `colour_args.py` draws every colour form once and holds still - numeric colours were painted white under Pyodide, and the only curriculum file that would have shown it animated the colour, so the difference read as timing |
 | `canvas-probe.html` | Runs ONE drawing program under ONE interpreter and reports what it painted |
 | `compare-canvas.sh` | Drives the probe over the pyangelo files and diffs the pixels |
 | `cdp-run.js` | Loads a page in headless Chrome and waits for it to signal `DONE`. No dependencies - Node 22+ has a built-in WebSocket |
@@ -141,6 +142,13 @@ Real time costs roughly 1.5x on a Pyodide chunk and buys back the retries.
 as that item finishes, and something must check on it automatically. Waiting for
 the timeout is not a plan.**
 
+**And every test run, of any length, is reported on every minute while it runs**
+- the current step, how long it has been going, and the latest results -
+whether or not anything changed since the last report. The person waiting on a
+run should never have to ask how it is going. This was asked for directly ("how's
+it going? can you report every minute please") and is a standing instruction,
+not a courtesy for long runs only.
+
 The reason is specific, not general tidiness: here a slow run and a hung run
 look identical. `inquisitive/turtle/y5l3d1` legitimately takes ~90 seconds per
 runtime because it is a 5000-frame drawing; a stale Chrome profile, a
@@ -159,13 +167,16 @@ tests/compare-canvas.sh 30 turtle 2>&1 | tee /tmp/turtle.log
 ```
 
 ```sh
-# 2. Heartbeat: check every 60s, and PROBE FOR LIFE after 2 minutes without a
-#    new line. Run it as a watcher - not as something you intend to remember.
-#    The log is the primary signal: if it grew, the run is fine.
+# 2. Heartbeat: REPORT every 60s - unconditionally, changed or not - and PROBE
+#    FOR LIFE after 2 minutes without a new line. Run it as a watcher, not as
+#    something you intend to remember, and pass every STATUS line on to the
+#    person waiting as it arrives. The log is the primary signal: if it grew,
+#    the run is fine.
 prev=0; stale=0
 while ! grep -qE 'TOTAL [0-9]+ files|problem\(s\)|no blank' /tmp/turtle.log; do
     sleep 60
     n=$(wc -l < /tmp/turtle.log)
+    echo "STATUS $(date +%H:%M:%S): $n lines; last: $(tail -1 /tmp/turtle.log)"
     if [ "$n" -gt "$prev" ]; then prev=$n; stale=0; continue; fi
     stale=$((stale + 1))
     [ "$stale" -ge 2 ] && { echo "no new line for 2 min - run step 3"; stale=0; }
@@ -212,7 +223,7 @@ the strength of them.
 
 ### The traps that make this fail
 
-All three have been hit here, and each one makes the monitoring *look* set up
+All of these have been hit here, and each one makes the monitoring *look* set up
 while telling you nothing:
 
 1. **Piping a long run through `tail`, `head` or `sort` buffers the whole
@@ -248,6 +259,31 @@ while telling you nothing:
    started, is an orphan — kill those **by PID**. Non-headless Chrome in that
    list is the developer's own browser: **never `taskkill /F /IM chrome.exe`**
    and never kill by name.
+
+   That filter finds the *browser* process only. Its renderer and GPU children
+   do not carry `--headless` on their command lines, so killing the matches one
+   by one leaves them running. Kill the tree from its root instead:
+   `taskkill /PID <browser-or-driver-pid> /T /F`. Killing a stuck probe's
+   driver loop the same way also stops it launching the next probe.
+4. **A liveness probe that cannot see processes reports the same thing for a
+   live run and a dead one.** `wmic process ... | grep -c` run from Git Bash
+   returns **0** for every query - measured: 0 chrome.exe via `wmic` against
+   20 via PowerShell at the same moment. A watcher built on it printed
+   `headless chrome procs=0, cdp-run node=0` every minute for eighteen minutes
+   while a probe sat hung, which reads as "finished" rather than "stuck". Query
+   through `powershell.exe -NoProfile -Command "Get-CimInstance ..."`, and
+   **test the probe against a process you know is alive before trusting it.**
+   When a liveness line does fire, act on it that turn - the alert is the whole
+   point of the watcher.
+5. **A page that freezes its main thread used to hang `cdp-run.js` for ever.**
+   Its wait loop checked the deadline only between CDP calls, and a page stuck
+   in synchronous work never answers `Runtime.evaluate`, so the `await` never
+   returned. The trigger was a probe doing `for i in range(100000000)` under
+   Skulpt, which builds the whole list before iterating; it sat for 19 minutes
+   on a 115-second timeout. `cdp-run.js` now gives each call 5 seconds and has a
+   hard watchdog at `timeout + 10s` that kills Chrome regardless - checked
+   against `data:` page running `for(;;){}`, which now exits in 11 seconds. If
+   you write another CDP driver, give it both.
 
 ### The rest of the rules
 
@@ -339,10 +375,11 @@ Two honest limits:
 ## Canvas programs
 
 ```sh
-tests/compare-canvas.sh 30            # all three groups
-tests/compare-canvas.sh 30 pyangelo   # 15 curriculum files, ~4 min
-tests/compare-canvas.sh 30 turtle     # 14 curriculum files, ~15 min
-tests/compare-canvas.sh 30 api        # 8 hand-written files, ~3 min
+tests/compare-canvas.sh 30                # all four groups
+tests/compare-canvas.sh 30 pyangelo       # 15 curriculum files, ~4 min
+tests/compare-canvas.sh 30 turtle         # 14 curriculum files, ~15 min
+tests/compare-canvas.sh 30 api            # 8 hand-written turtle files, ~3 min
+tests/compare-canvas.sh 30 pyangelo-api   # hand-written pyangelo pictures, ~30 s each
 ```
 
 Runs each drawing program under Skulpt and under Pyodide and compares the
@@ -356,6 +393,7 @@ The groups end differently, and the probe handles each accordingly:
 | `pyangelo` | `#pyangelo`, one canvas | Endless game loops. Autorun, count `frames` animation frames, sample. Ink is anything not pure black |
 | `turtle` | `#turtleCanvas`, a div of three stacked canvases | These *finish*. The probe holds the run back with `norun=1`, swaps `stopSkulpt`, starts it itself and samples at the end. Layers are flattened onto white; ink is anything not pure white |
 | `api` | the same, from `tests/turtle-api/*.py` | The micro-suite. Loaded with `?codeurl=`, which fetches the source and hands it to `editor.html?code=` rather than `?project=` |
+| `pyangelo-api` | the `#pyangelo` canvas, from `tests/pyangelo-api/*.py` | Static pictures, so a pixel difference cannot be explained away as animation phase. When a curriculum file "differs" and timing is the suspected reason, freeze the animation in a copy and compare again - that is how the numeric-colour bug was found |
 
 The `api` group also compares the **console text**, and so does the `turtle`
 group. Query functions - `heading()`, `distance()`, `pencolor()`, the shape and
@@ -432,6 +470,46 @@ The tallies match within each runtime, which is the useful signal: the editor
 has no effect on what a program does. The `unchecked` verdicts under Pyodide are
 expected - passing `runtime=` puts `conform.js` into cross-runtime mode, where a
 truncated run is not asked whether it still raises.
+
+## Pacing: measure what the player feels
+
+A healthy browser proves nothing about whether a game feels right. While
+`demos/snake.py` was polling its keys 81 times a second and missing a quarter
+of quick taps under Pyodide, every browser-level number was perfect: frames at
+16.7 ms, no long tasks, timer lag under 3 ms, and a bare frame yield timed at
+exactly one frame. What found the bug was instrumenting the *program*:
+
+- **the interval between the game's own state changes** - snake should move
+  every 250 ms, and it moved 267-301 ms apart;
+- **loops per second**, against Skulpt on the same machine;
+- **synthetic key taps of realistic length** (40 ms) dispatched on the canvas
+  and counted by the program itself.
+
+```sh
+# tests/pacing/pacing.html runs one program in an editor iframe and reports
+# frame intervals, timer lag, long tasks and the program's console text.
+node tests/cdp-run.js "http://localhost:8731/tests/pacing/pacing.html?runtime=pyodide&codeurl=tests/pacing/tap_program.py&taps=40" "#out" 115000
+python tests/pacing/make_variants.py   # instrumented snake/pong copies, both runtimes
+```
+
+Cautions from that investigation:
+
+- **Skulpt's own loop rate varied up to 3x between identical runs** (snake 1604
+  vs 3225 loops/s, pong's intro body 979 vs 3070). Compare against a range,
+  never one number.
+- **Measure the reference implementation directly before designing to copy
+  it.** pong's slow Skulpt loop suggested Skulpt throttled every `while`
+  iteration, so a 1500/s cap was built for canvas programs. Timing Skulpt on
+  bare loops disproved that (an empty canvas `while` loop: ~80,000/s), and the
+  cap - which made light loops 30-50x slower than Skulpt - was removed. One
+  program is an anecdote; time the construct itself.
+- **A per-statement bisect must flush.** Timing `drawText` in a loop with no
+  `clearScreen()` grows Skulpt's command queue without bound, and every section
+  measured after it slowed to ~18,000/s - even `isKeyPressed`. It looked like a
+  uniform per-call cost and was an artefact.
+- **Stop when the answer stops mattering.** Once Skulpt's slow loops were shown
+  to be the cost of its own execution, *why* one body costs more no longer
+  changed the design. The resulting rule is documented in `js/py/prelude.py`.
 
 ## Pyodide-only checks
 
