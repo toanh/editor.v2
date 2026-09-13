@@ -114,12 +114,28 @@ def _require_school():
         raise Exception("School ID not set. Please set it using the function setSchool().")
 
 
+def _py(value):
+    """A reply from the host, as Python values.
+
+    The host resolves plain JavaScript objects and arrays, which arrive here as
+    JsProxy objects. Those allow attribute access but not ["key"], slicing or
+    negative indexing - so every `result["status"]` raised "TypeError:
+    'pyodide.ffi.JsProxy' object is not subscriptable", which broke every web
+    service (weather, ChatGPT, images, translation, cloud variables). No gate
+    could see it: every curriculum file that uses them carries the blocking
+    `network` tag. to_py() converts the whole structure - nested objects to
+    dicts, arrays to lists; strings and numbers pass through untouched.
+    """
+    return value.to_py() if hasattr(value, "to_py") else value
+
+
 def _service(result, what):
     """Turn the host's {status, response} into a value or the fork's exception.
 
     The status handling is the same in every web-service function in the
     original, so it lives in one place here.
     """
+    result = _py(result)
     status = result["status"]
     body = result["response"]
     if status == 403:
@@ -607,7 +623,7 @@ def getCloudVariable(name):
     name = schoolID + "_" + name
     _host.showSpinner()
     try:
-        result = block(_host.getCloudVariable(name, schoolID))
+        result = _py(block(_host.getCloudVariable(name, schoolID)))
     finally:
         _host.hideSpinner()
     if result["status"] == 418:
@@ -646,7 +662,7 @@ def delCloudVariable(name):
     name = schoolID + "_" + name
     _host.showSpinner()
     try:
-        result = block(_host.delCloudVariable(name, schoolID))
+        result = _py(block(_host.delCloudVariable(name, schoolID)))
     finally:
         _host.hideSpinner()
     # 418 means "no such variable", which delete treats as success. The
@@ -701,7 +717,7 @@ def loadPoseModel(url=None):
 
 
 def predictPoseFromWebCam(showAll=False, topK=-1):
-    result = block(_host.predictPoseFromWebCam(topK))
+    result = _py(block(_host.predictPoseFromWebCam(topK)))
     if showAll:
         return result
     best = None
@@ -712,7 +728,7 @@ def predictPoseFromWebCam(showAll=False, topK=-1):
 
 
 def getSkeletonFromWebCam():
-    result = block(_host.predictPoseFromWebCam(-1))
+    result = _py(block(_host.predictPoseFromWebCam(-1)))
     return result[-1]
 
 
@@ -721,7 +737,7 @@ def loadAudioModel(url=None):
 
 
 def predictFromAudio(showAll=False):
-    return block(_host.predictFromAudio())
+    return _py(block(_host.predictFromAudio()))
 
 
 def loadImageModel(url=None):
@@ -729,10 +745,10 @@ def loadImageModel(url=None):
 
 
 def predictFromImage(param, topK=1):
-    result = block(_host.predictFromImage(param, topK))
+    result = _py(block(_host.predictFromImage(param, topK)))
     return result[0] if topK == 1 else result
 
 
 def predictFromWebCam(topK=1):
-    result = block(_host.predictFromWebCam(topK))
+    result = _py(block(_host.predictFromWebCam(topK)))
     return result[0] if topK == 1 else result

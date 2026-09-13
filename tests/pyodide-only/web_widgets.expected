@@ -1,0 +1,12 @@
+weather temp: 12.5
+weather location: Melbourne
+completion: Reykjavik
+openai image: https://example.invalid/castle.png
+translation: ni hao ma
+cloud get plus one: 43
+cloud delete of a missing variable: no error
+403 raises the school-ID message: True
+unsized image has no width attribute: True
+unsized image is not absolutely positioned: True
+sized image: 40 30
+button without coordinates is not absolute: True

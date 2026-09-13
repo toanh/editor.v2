@@ -19,7 +19,7 @@
 
 var PyodideRuntime = (function () {
     var PY_LIB = "/pyeditor";   // where js/py/*.py is mounted inside Pyodide
-    var PY_LIB_VERSION = 24;     // bump when any js/py/*.py changes
+    var PY_LIB_VERSION = 25;     // bump when any js/py/*.py changes
 
     var py = null;              // the Pyodide API object
     var prelude = null;         // the imported prelude module
@@ -57,12 +57,21 @@ var PyodideRuntime = (function () {
         });
     }
 
+    // Python's None reaches JavaScript as undefined, not null. console.js was
+    // written against Skulpt, whose remapToJs turns None into null, so it tests
+    // every optional width, height, x and y with `!== null` - and undefined sails
+    // straight through that test. printImage(url) set img.width = undefined, a
+    // zero-size image with no error anywhere, and every printButton without
+    // coordinates became position: absolute in the corner. Normalised here,
+    // once, for every call that reaches those helpers.
+    function nul(v) { return v === undefined ? null : v; }
+
     // Wraps console.js's callback-style DOM helpers, which take (…, onload,
     // onerror), into a promise. These are the same functions the Skulpt path
     // uses - there is one implementation of "put an image in the console".
     function fromCallbacks(fn) {
         return function () {
-            var args = Array.prototype.slice.call(arguments);
+            var args = Array.prototype.slice.call(arguments).map(nul);
             return cancellable(new Promise(function (resolve) {
                 // Both paths resolve: the original cleared its loading flag on
                 // error too, so the program continued rather than hanging.
@@ -290,7 +299,7 @@ var PyodideRuntime = (function () {
             _clickedButtons = [];
             // Same scrambled argument order as csinscTools.js - see the note in
             // csinsc.printButton.
-            addButton(id, text, w, h, x, y, w, h, function (ev) {
+            addButton(id, text, nul(w), nul(h), nul(x), nul(y), nul(w), nul(h), function (ev) {
                 _clickedButtons.push(ev.target.id);
                 if (_awaitButton) { var f = _awaitButton; _awaitButton = null; f(_clickedButtons); }
             });
@@ -300,7 +309,7 @@ var PyodideRuntime = (function () {
             return cancellable(new Promise(function (resolve) { _awaitButton = resolve; }));
         },
         addTextbox: function (id, text, w, h, x, y) {
-            addTextbox(id, text, w, h, x, y, w, h, function () {});
+            addTextbox(id, text, nul(w), nul(h), nul(x), nul(y), nul(w), nul(h), function () {});
         },
         getTextboxContents: function (id) {
             var el = document.getElementById(id);

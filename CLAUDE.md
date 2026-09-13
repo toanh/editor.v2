@@ -165,6 +165,13 @@ Those fetches all have to succeed or the runtime does not start, so `fetchText` 
 
 [js/py/csinsc.py](js/py/csinsc.py) is the fork's `csinsc.py` with exactly two kinds of change: each `csinscTools.foo(); while csinscTools.fooWaiting: continue` pair collapses to one `block(_host.foo(...))`, and web-service calls return `{status, response}` from a single `fetch` instead of setting flags Python polled. The colour tables, `slowPrint`'s escape handling, the input-helper family and every error message are carried across verbatim, because the curriculum depends on the exact text. `goodies.py` is `from csinsc import *`, as in the fork.
 
+**Values change shape crossing the bridge, in both directions, and `console.js` was written for Skulpt's shapes.** Both of these shipped, both broke silently or with an unhelpful traceback, and neither was visible to any gate because every file using them carries the blocking `network` or `widgets` tag:
+
+- **JavaScript → Python: a plain object or array arrives as a `JsProxy`**, which allows attribute access but not `["key"]`, slicing or negative indexing. `_service()` did `result["status"]`, so *every* web service — weather, ChatGPT, OpenAI images, translation, cloud variables — raised `TypeError: 'pyodide.ffi.JsProxy' object is not subscriptable`. `csinsc._py()` now calls `to_py()` on host replies before they are used.
+- **Python → JavaScript: `None` arrives as `undefined`, not `null`.** Skulpt's `remapToJs` produced `null`, and `console.js` tests every optional width/height/x/y with `!== null`, which `undefined` passes. `printImage(url)` set `img.width = undefined` — a zero-size image, no error — and every `printButton` without coordinates became `position: absolute`. `runtime-pyodide.js`'s `nul()` normalises at the bridge. (The mirror image, `null` from JavaScript arriving in Python as `JsNull`, is described under pyangelo below.)
+
+`tests/pyodide-only/web_widgets.py` intercepts `fetch` and inspects the DOM to pin both, without touching the live service. When porting anything else across the bridge, assume neither conversion happens for you.
+
 Not yet ported, and raising a clear "add `&runtime=skulpt`" message: the webcam and Teachable Machine functions.
 
 **`say()` carries two protections that are invisible without a microphone**, and the first version of this bridge had neither — a regression that reached the 11+ files using speech. Both live in `runtime-pyodide.js`, where the fork keeps them:
