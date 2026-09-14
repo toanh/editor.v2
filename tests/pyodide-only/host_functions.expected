@@ -1,0 +1,25 @@
+getURLParam(runtime): pyodide
+getURLParam(missing): 'None'
+console font size: 16pt
+default iframe: 600 480 in flow
+placed iframe: 300 200 absolute 10px 20px
+non-drive link raises: The url is not a google drive link.
+getWebCamImage without a webcam: ''
+inputnumber: 42.0 42.0
+getlight brightness: 100
+getButton: 1002
+waitForSmartButtonClick: 34
+Hue requests:
+  GET /cloudvars/get?name=school_huebridge_cloud_student&school=school_huebridge
+  GET /api/3Lq6V7ZuY7pxl5vbivXanTQqe1XDllV8lHFEOhhP/lights
+  PUT /api/3Lq6V7ZuY7pxl5vbivXanTQqe1XDllV8lHFEOhhP/lights/3/state {"on":false,"bri":254,"xy":[0.5,0.4],"colormode":"xy"}
+  PUT /api/3Lq6V7ZuY7pxl5vbivXanTQqe1XDllV8lHFEOhhP/lights/1/state {"on":true}
+  PUT /api/3Lq6V7ZuY7pxl5vbivXanTQqe1XDllV8lHFEOhhP/lights/1/state {"bri":200}
+  PUT /api/3Lq6V7ZuY7pxl5vbivXanTQqe1XDllV8lHFEOhhP/lights/1/state {"xy":[0.3,0.3],"colormode":"xy"}
+  GET /api/3Lq6V7ZuY7pxl5vbivXanTQqe1XDllV8lHFEOhhP/lights/1
+  GET /api/3Lq6V7ZuY7pxl5vbivXanTQqe1XDllV8lHFEOhhP/sensors/7
+  GET /api/3Lq6V7ZuY7pxl5vbivXanTQqe1XDllV8lHFEOhhP/sensors/7
+  GET /api/3Lq6V7ZuY7pxl5vbivXanTQqe1XDllV8lHFEOhhP/sensors/7
+  GET /api/3Lq6V7ZuY7pxl5vbivXanTQqe1XDllV8lHFEOhhP/sensors/7
+  PUT /api/3Lq6V7ZuY7pxl5vbivXanTQqe1XDllV8lHFEOhhP/lights/2/state {"on":true}
+  PUT /api/3Lq6V7ZuY7pxl5vbivXanTQqe1XDllV8lHFEOhhP/lights/2/state {"bri":50}

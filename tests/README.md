@@ -28,6 +28,8 @@ current code and the eventual Pyodide build.
 | `pygmi.html` | Unit tests for `js/pygmi.js` - the goto/label spellings, the `?wheels=1` beginner dialect, the print-concatenation rewrite and the cloud-variable lexer. Pure string in, string out; also asserts every pass is line-preserving and carries no state between calls |
 | `check-combos.sh` | Runs a sample of the corpus through all four editor × runtime combinations. Phase 4 is on hold, so `?editor=ace` and `?runtime=skulpt` are supported features and need checking like anything else |
 | `check-pyodide.sh` | Runs `pyodide-only/*.py` under Pyodide and diffs each against its checked-in `.expected` file |
+| `stepping.html` | Drives the step debugger and breakpoints through the real editor UI - Step/Run code path, Next and Continue buttons - and records every pause: the highlighted line and what the watch table was given |
+| `check-stepping.sh` | Runs the `stepping/*.py` scenarios through `stepping.html` under both runtimes and compares them pause by pause. Skulpt is the reference; one narrowly-scoped difference is accepted |
 | `pyodide-only/*.py` | Programs that **cannot** be compared against Skulpt: hardware modules that both runtimes can only fail at (differently, on purpose), and behaviour the port deliberately corrects. Each has a `.expected` beside it |
 | `turtle-api/*.py` | Hand-written programs for the turtle functions no curriculum file calls - `circle`, `dot`, `stamp`, `setheading`, `pensize`, `fillcolor`, `write(move=True)`, the shape table, `tracer`/`update`, `degrees`/`radians`, multiple turtles. Not in `projects/` on purpose: they are not curriculum and must not reach the manifest or the goldens |
 | `pyangelo-api/*.py` | Hand-written static pictures of the `pyangelo` module's argument forms, compared against Skulpt by `compare-canvas.sh pyangelo-api`. `colour_args.py` draws every colour form once and holds still - numeric colours were painted white under Pyodide, and the only curriculum file that would have shown it animated the colour, so the difference read as timing |
@@ -511,6 +513,38 @@ Cautions from that investigation:
   to be the cost of its own execution, *why* one body costs more no longer
   changed the design. The resulting rule is documented in `js/py/prelude.py`.
 
+## Stepping and breakpoints
+
+```sh
+tests/check-stepping.sh     # 11 scenarios x 2 runtimes, ~5 min
+```
+
+The conformance corpus never presses a button, so it cannot see the debugger at
+all. Under Pyodide the Step button used to run the program straight through,
+highlighting nothing, and every gate still passed.
+
+`stepping.html` loads a program into a real editor, sets gutter breakpoints
+through the `Editor` facade, starts it exactly as Step or Run does, and clicks
+the real Next and Continue buttons - recording what `Editor.setStepLine` and
+`populateTraceTable` were handed at each pause. `check-stepping.sh` does that
+under both runtimes and compares the two.
+
+What comparing against Skulpt caught, none of it visible from the code:
+
+- **A `goto` jump never arrives at its label** as far as CPython's LINE event
+  is concerned, so stepping silently skipped every label after a jump.
+- **The first fix for that inferred a jump from the last line reported.** While
+  running to a breakpoint, lines disable their own events, so that record goes
+  stale: a breakpoint on a label fired twice where Skulpt fired three times.
+- **Skulpt sent no watch-table data after Next at a breakpoint**, leaving the
+  table blank - a bug in the new code, in the reference runtime.
+
+Watch tables are compared as sets, because name order within a frame is
+JavaScript property order under Skulpt and means nothing to a student. The one
+accepted difference - CPython pauses on a `for` line before taking the next item,
+Skulpt after - is expressed per scenario as the exact expected Pyodide lines and
+the lines whose table is not compared. It is not a tolerance.
+
 ## Pyodide-only checks
 
 ```sh
@@ -565,6 +599,26 @@ arithmetic at every boundary and the failed-pairing path, and the LED
 bit-packing was checked exhaustively against the fork's algorithm for all 32 row
 patterns - but pairing, the buttons, the screen and the sensors need a human
 with a flashed board.
+
+**How breakpoints look and feel.** `check-stepping.sh` sets breakpoints through
+`Editor.setBreakpoints()` and clicks the Next and Continue buttons in the DOM, so
+it proves pausing, stepping and the watch table's contents. It does not click
+the gutter, see the red dot or the hover hint, or check that the paused-state
+buttons and the watch-table window sit sensibly on screen. Check by hand in
+Monaco and in `?editor=ace` - including that a breakpoint follows its line when
+lines are added above it.
+
+**A real webcam and real Teachable Machine models.** `pyodide-only/teachable_machine.py`
+fakes the camera, `tmImage`, `tmPose` and `speechCommands`, so it proves the
+port's arguments, return shapes and messages - not that tf.js loads a model,
+that the browser grants camera or microphone permission, or that the pose
+skeleton draws over the video. The upload-dialog path of `loadImageModel()` is
+not exercised at all.
+
+**A real Philips Hue bridge.** `pyodide-only/host_functions.py` fakes `fetch`
+and checks every request's method, path and body. Whether a bridge on the school
+network accepts them - over HTTPS with its self-signed certificate - needs a
+bridge.
 
 `?id=` (codestore snapshots) needs the live web service, so nothing here covers
 it. Check it by hand after touching `fetchFromCodestore()` in `editor.js`.

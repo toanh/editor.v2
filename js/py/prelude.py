@@ -221,8 +221,12 @@ def _report(exc):
 USER_FILENAME = "<stdin>.py"
 
 
-def run_user_code(src):
+def run_user_code(src, step=False, autostep=False, breakpoints=None):
     """Entry point, called from JS with callPromising so run_sync works.
+
+    `step` pauses on every line (the Step button), `autostep` is ?autostep's
+    slow-motion variant, and `breakpoints` is the editor's list of line numbers -
+    see stepper.py.
 
     Compiled as "<stdin>.py" so tracebacks carry the filename the editor
     reports line numbers against.
@@ -232,6 +236,7 @@ def run_user_code(src):
     and letting it escape would print it twice.
     """
     import gotolabel
+    import stepper
     import yielding
 
     module = {"__name__": "__main__", "__builtins__": builtins}
@@ -240,6 +245,7 @@ def run_user_code(src):
 
     traced = False
     yielded = False
+    debugging = False
     try:
         with warnings.catch_warnings():
             # CPython 3.12+ warns about invalid escape sequences such as the
@@ -260,6 +266,7 @@ def run_user_code(src):
         # the main thread and the tab stops responding entirely.
         reset_yield_clock()
         yielded = yielding.install(code)
+        debugging = stepper.install(code, step, autostep, breakpoints)
     except SyntaxError as exc:
         _report(exc)
         return
@@ -273,6 +280,8 @@ def run_user_code(src):
     except BaseException as exc:  # noqa: BLE001 - this is the top of the stack
         _report(exc)
     finally:
+        if debugging:
+            stepper.uninstall()
         if yielded:
             yielding.uninstall()
         if traced:

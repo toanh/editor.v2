@@ -11,6 +11,7 @@ var AceEditorBackend = (function () {
     var Range = null;
     var stepMarkerId = null;
     var completionFn = null;
+    var breakpointsEnabled = false;
 
     // Ace is no longer in editor.html - Monaco is the editor now - so the
     // ?editor=ace escape hatch pulls it in on demand. Nobody pays for it
@@ -66,6 +67,37 @@ var AceEditorBackend = (function () {
                 ed.setHighlightActiveLine(true);
                 self.setTheme(opts.theme || "dark");
 
+                // Click a line number to toggle a breakpoint, using Ace's own
+                // gutter breakpoints.
+                ed.on("guttermousedown", function (e) {
+                    if (!breakpointsEnabled) { return; }
+                    var row = e.getDocumentPosition().row;
+                    if (ed.session.getBreakpoints()[row]) {
+                        ed.session.clearBreakpoint(row);
+                    } else {
+                        ed.session.setBreakpoint(row);
+                    }
+                    e.stop();
+                });
+
+                // Ace keeps breakpoints by row number and does not move them
+                // when lines are inserted or removed above, so a breakpoint
+                // would silently land on a different line. Shift them here.
+                ed.session.on("change", function (delta) {
+                    var shift = delta.end.row - delta.start.row;
+                    if (!shift) { return; }
+                    if (delta.action === "remove") { shift = -shift; }
+                    var old = ed.session.getBreakpoints();
+                    var moved = [];
+                    for (var r in old) {
+                        if (!old[r]) { continue; }
+                        var row = Number(r);
+                        moved.push(row > delta.start.row ? Math.max(delta.start.row, row + shift) : row);
+                    }
+                    ed.session.clearBreakpoints();
+                    moved.forEach(function (row) { ed.session.setBreakpoint(row); });
+                });
+
                 if (typeof opts.value === "string") {
                     self.setValue(opts.value);
                 }
@@ -100,6 +132,25 @@ var AceEditorBackend = (function () {
 
         clearStepLine: function () {
             clearStepMarker();
+        },
+
+        setBreakpointsEnabled: function (enabled) {
+            breakpointsEnabled = enabled;
+            if (!enabled) { ed.session.clearBreakpoints(); }
+        },
+
+        getBreakpoints: function () {
+            var rows = ed.session.getBreakpoints();
+            var lines = [];
+            for (var r in rows) {
+                if (rows[r]) { lines.push(Number(r) + 1); }
+            }
+            return lines.sort(function (a, b) { return a - b; });
+        },
+
+        setBreakpoints: function (lines) {
+            ed.session.clearBreakpoints();
+            lines.forEach(function (n) { ed.session.setBreakpoint(n - 1); });
         },
 
         setReadOnly: function (readOnly) {

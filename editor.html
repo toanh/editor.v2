@@ -68,7 +68,7 @@
   <script src="js/qrcode.min.js" type="text/javascript" charset="utf-8"></script>
   <link rel="stylesheet" href="css/tabulator.min.css" >
   <link rel="stylesheet" href="js/monaco/vs/editor/editor.main.css">
-	<link rel="stylesheet" href="css/styles.css?v=6">
+	<link rel="stylesheet" href="css/styles.css?v=7">
 </head>
 
 <body>
@@ -82,6 +82,7 @@ height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
             <button id="stepButton" type="button" onclick="runSkulpt(true);" style = "width:72px">👣 Step</button>
             <button id="stopButton" type="button" onclick="stopEditor();" style = "width:148px">🛑 Stop</button>
             <button id="nextButton" type="button" style = "width:72px">⏭️ Next</button>
+            <button id="continueButton" type="button" style = "width:100px; display:none">▶️ Continue</button>
             <button id="resetButton" type="button" onclick="resetEditor();" style = "width:78px">🔄 Reset</button>
             <!--<button id="copyButton" type="button" onclick="copyCode();" style = "width:72px">📋 Copy</button>-->
             <button id="saveButton" type="button" onclick="saveCode(filename);" style = "width:72px">💾 Save</button>
@@ -144,20 +145,20 @@ height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
     <script src="js/lex.js" type="text/javascript" charset="utf-8"></script>
     <script src="js/lexpy.js" type="text/javascript" charset="utf-8"></script>
     <!-- editor + runtime facades and their backends: must load before editor.js -->
-    <script src="js/editorapi.js?t=2" type="text/javascript" charset="utf-8"></script>
-    <script src="js/editor-ace.js?t=2" type="text/javascript" charset="utf-8"></script>
-    <script src="js/runtime.js?t=4" type="text/javascript" charset="utf-8"></script>
-    <script src="js/runtime-skulpt.js?t=2" type="text/javascript" charset="utf-8"></script>
+    <script src="js/editorapi.js?t=3" type="text/javascript" charset="utf-8"></script>
+    <script src="js/editor-ace.js?t=3" type="text/javascript" charset="utf-8"></script>
+    <script src="js/runtime.js?t=5" type="text/javascript" charset="utf-8"></script>
+    <script src="js/runtime-skulpt.js?t=4" type="text/javascript" charset="utf-8"></script>
     <!-- Pyodide: the loader is ~19 KB and defines loadPyodide(); the 13 MB of
          wasm and stdlib are only fetched if ?runtime=pyodide actually boots it. -->
     <script src="js/pyodide/pyodide.js" type="text/javascript" charset="utf-8"></script>
-    <script src="js/runtime-pyodide.js?t=12" type="text/javascript" charset="utf-8"></script>
+    <script src="js/runtime-pyodide.js?t=17" type="text/javascript" charset="utf-8"></script>
     <!-- Monaco's AMD loader installs global define()/require(). It goes last,
          after every UMD library above, so none of them register as AMD modules
          instead of setting their globals. -->
     <script src="js/monaco/vs/loader.js" type="text/javascript" charset="utf-8"></script>
-    <script src="js/editor-monaco.js?t=1" type="text/javascript" charset="utf-8"></script>
-	<script src="js/editor.js?t=59" type="text/javascript"></script>
+    <script src="js/editor-monaco.js?t=2" type="text/javascript" charset="utf-8"></script>
+	<script src="js/editor.js?t=60" type="text/javascript"></script>
 	<div class="modal">
 	  <div class="modal-content">
 		<span class="close-btn">&times;</span>

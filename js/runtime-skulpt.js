@@ -71,23 +71,59 @@ var SkulptRuntime = (function () {
         return child;
     }
 
-    function makeStepper(opts, pickFrame, withLocals) {
-        var prevLine = -1;
-        return async function (susp) {
+    // Pauses for the step debugger and for breakpoints. Installed on Sk.debug
+    // and Sk.delay, so it sees one suspension per statement while `debugging`
+    // is on, plus one per `while` iteration.
+    //
+    // onStep's promise resolves with "step" (Next: pause on the next line too)
+    // or "continue" (run on to the next breakpoint).
+    //
+    // When a suspension is not a pause - not stepping, and not on a breakpoint -
+    // this returns nothing, which hands it back to Skulpt's default handling:
+    // Sk.debug resumes synchronously, Sk.delay through setImmediate. A run with
+    // breakpoints set therefore costs no more than a run without. That must NOT
+    // be done by making Sk.breakpoints() return false instead: the same
+    // predicate decides whether a `while` loop suspends each iteration, and
+    // killableWhile - the only thing keeping a game loop from freezing the tab -
+    // depends on it.
+    function makeDebugger(opts, pickFrame, withLocals) {
+        var stepping = !!opts.stepMode;
+        var breakpoints = {};
+        (opts.breakpoints || []).forEach(function (n) { breakpoints[n] = true; });
+        var lastLine = -1;
+
+        return function (susp) {
             checkForStop();
+            var frame;
             try {
-                var frame = pickFrame(susp);
-                if (frame.$lineno != prevLine) {
-                    await opts.onStep({
-                        lineno: frame.$lineno,
-                        locals: withLocals ? collectLocals(susp, []) : null
-                    });
-                    prevLine = frame.$lineno;
-                }
-                return Promise.resolve(susp.resume());
+                frame = pickFrame(susp);
             } catch (e) {
-                return Promise.reject(e);
+                if (stepping) { return Promise.reject(e); }
+                return undefined;
             }
+            var line = frame.$lineno;
+            var atBreakpoint = breakpoints[line] === true && frame.$filename === "<stdin>.py";
+            var newLine = line != lastLine;
+            lastLine = line;
+
+            if (!newLine || (!stepping && !atBreakpoint)) {
+                if (!stepping) { return undefined; }
+                try {
+                    return Promise.resolve(susp.resume());
+                } catch (e) {
+                    return Promise.reject(e);
+                }
+            }
+
+            return (async function () {
+                var command = await opts.onStep({
+                    lineno: line,
+                    locals: (withLocals || atBreakpoint) ? collectLocals(susp, []) : null,
+                    reason: atBreakpoint ? "breakpoint" : "step"
+                });
+                stepping = command !== "continue";
+                return susp.resume();
+            })();
         };
     }
 
@@ -174,12 +210,15 @@ var SkulptRuntime = (function () {
 
             var handlers = {};
             handlers["*"] = checkForStop;
-            if (opts.stepMode) {
-                var stepper = opts.autoStep
-                    ? makeStepper(opts, deepestFrame, false)
-                    : makeStepper(opts, deepestStdinFrame, true);
-                handlers["Sk.debug"] = stepper;
-                handlers["Sk.delay"] = stepper;
+            if (opts.stepMode || (opts.breakpoints && opts.breakpoints.length)) {
+                var debug = opts.stepMode && opts.autoStep
+                    ? makeDebugger(opts, deepestFrame, false)
+                    // Locals at every manual pause - including the lines
+                    // stepped to after Next at a breakpoint, not only the
+                    // breakpoint itself.
+                    : makeDebugger(opts, deepestStdinFrame, true);
+                handlers["Sk.debug"] = debug;
+                handlers["Sk.delay"] = debug;
             }
 
             var self = this;

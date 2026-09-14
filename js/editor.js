@@ -739,17 +739,42 @@ function sleep(ms) {
 	return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-// wait for next button before resuming suspension
-function singleStep() {
-	return new Promise((resolve, reject) => {
-		nextButton.addEventListener('click', function(e) {
-			resolve(1);
-		}, {once: true});
-		stopButton.addEventListener('click', function(e) {
-			stopSkulpt();
-			resolve(1);
-		}, {once: true});
+// Resolves with "step" (Next) or "continue" (Continue) once the student picks
+// one; Stop also ends the wait. Every listener is removed however the wait ends -
+// the version this replaced added a fresh {once} Stop listener on every single
+// step and never removed any, so a long stepping session piled them up.
+function waitForDebugCommand() {
+	return new Promise(function (resolve) {
+		function finish(command) {
+			nextButton.removeEventListener("click", onNext);
+			continueButton.removeEventListener("click", onContinue);
+			stopButton.removeEventListener("click", onStop);
+			resolve(command);
+		}
+		function onNext() { finish("step"); }
+		function onContinue() { finish("continue"); }
+		function onStop() { stopSkulpt(); finish("step"); }
+		nextButton.addEventListener("click", onNext);
+		continueButton.addEventListener("click", onContinue);
+		stopButton.addEventListener("click", onStop);
 	});
+}
+
+// The paused-state UI: watch table, Next and Continue, editor read-only. The
+// Step button shows it from the first line; a normal Run shows it the first
+// time it stops at a breakpoint.
+var debugUiShown = false;
+function showDebugUi() {
+	if (debugUiShown) {
+		return;
+	}
+	debugUiShown = true;
+	prevTraces = null;
+	createWatchTableFrame(200, 100);
+	Editor.setReadOnly(true);
+	stopButton.style.width = "72px";
+	nextButton.style.display = "inline";
+	continueButton.style.display = "inline";
 }
 
 var prevTraces = null;
@@ -802,13 +827,33 @@ function populateTraceTable(traces) {
 	}});
 }
 
-// Called by the runtime each time execution reaches a new line in step mode.
-// Returns a promise that resolves when the student is ready to advance:
-// either the Next button, or a fixed delay in ?autostep slow-mo.
+// Called by the runtime at every pause: each new line while stepping, and each
+// breakpoint. Resolves with "step" or "continue" when the student is ready to
+// advance - or, in ?autostep slow-mo, after a fixed delay. A breakpoint waits for
+// a button even under ?autostep, because that is the point of setting one.
 function onStepLine(info) {
+	var waitForButton = autostep == null || info.reason === "breakpoint";
+	if (waitForButton) {
+		showDebugUi();
+	}
 	populateTraceTable(info.locals);
 	Editor.setStepLine(info.lineno);
-	return autostep != null ? sleep(1000) : singleStep();
+	if (!waitForButton) {
+		return sleep(1000).then(function () { return "step"; });
+	}
+	return waitForDebugCommand().then(function (command) {
+		// Running on to the next breakpoint: the highlighted line is no longer
+		// where execution is.
+		if (command === "continue") {
+			Editor.clearStepLine();
+		}
+		return command;
+	});
+}
+
+// Breakpoints are available wherever the step debugger is.
+function breakpointsAllowed() {
+	return !(nostep != null && nostep.length > 0) && !headless;
 }
 
 function logError(text)
@@ -860,19 +905,16 @@ function runSkulpt(stepMode, code = "") {
 
 	let usingPyangeloBuiltin = checkForBuiltinPyangelo(code);
 
+	debugUiShown = false;
 	if (stepRun) {
-		// TODO: OOP all of this and make this a member variable NOT Globals!!
-		prevTraces = null;
-
-		// display watch table frame
-		createWatchTableFrame(200, 100);
-		// set readOnly for step mode
-		Editor.setReadOnly(true);
 		Editor.clearStepLine();
 		if (autostep == null) {
-			// shorten stop button
-			stopButton.style.width = "72px";
-			nextButton.style.display = "inline";
+			showDebugUi();
+		} else {
+			// ?autostep slow-mo: a watch table but no buttons to press
+			prevTraces = null;
+			createWatchTableFrame(200, 100);
+			Editor.setReadOnly(true);
 		}
 	}
 
@@ -880,6 +922,7 @@ function runSkulpt(stepMode, code = "") {
 		code: code,
 		stepMode: stepRun,
 		autoStep: autostep != null,
+		breakpoints: breakpointsAllowed() ? Editor.getBreakpoints() : [],
 		takesPrompt: usingPyangelo ? true : false,
 		debugging: usingPyangeloBuiltin ? false : true,
 		onOutput: outputf,
@@ -932,6 +975,8 @@ function stopSkulpt() {
 
 	stopButton.style.display = "none";
 	nextButton.style.display = "none";
+	continueButton.style.display = "none";
+	debugUiShown = false;
 	runButton.style.display = "inline";
 	if (nostep != null && nostep.length > 0) {
 		stepButton.style.display = "none";
@@ -1378,6 +1423,7 @@ var saveButton = document.getElementById("saveButton");
 var loadButton = document.getElementById("loadButton");
 var stepButton = document.getElementById("stepButton");
 var nextButton = document.getElementById("nextButton");
+var continueButton = document.getElementById("continueButton");
 var copyButton = document.getElementById("copyButton");
 var stopButton = document.getElementById("stopButton");
 var themeButton = document.getElementById("themeToggle");
@@ -1743,6 +1789,7 @@ async function acquireSource() {
 	// The editor first: Monaco's AMD loader has to fetch ~3.8 MB before there
 	// is anything to put source into.
 	await Editor.create("editor", { theme: startTheme });
+	Editor.setBreakpointsEnabled(breakpointsAllowed());
 
 	Runtime.setWebServiceURL(webServiceURL);
 	// console.js declares the classroom builtins into the Host registry at

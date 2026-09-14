@@ -60,8 +60,12 @@ var Runtime = (function () {
         //   debugging            emit per-line suspension points
         //   onOutput(text)       stdout
         //   onInput(prompt)      -> Promise<string>
-        //   onStep({lineno, locals})  -> Promise, resolved when the UI is ready
-        //                        to advance. `locals` is [[name, value], ...].
+        //   breakpoints          1-based line numbers to pause at, in any mode
+        //   onStep({lineno, locals, reason})  -> Promise, resolved when the UI
+        //                        is ready to advance, with "step" (pause on the
+        //                        next line too) or "continue" (run on to the next
+        //                        breakpoint). `locals` is [[name, value], ...] or
+        //                        null; `reason` is "step" or "breakpoint".
         // Returns a Promise that settles when the program ends.
         run: function (opts) {
             return required().run(opts);

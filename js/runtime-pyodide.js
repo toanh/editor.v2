@@ -19,7 +19,7 @@
 
 var PyodideRuntime = (function () {
     var PY_LIB = "/pyeditor";   // where js/py/*.py is mounted inside Pyodide
-    var PY_LIB_VERSION = 25;     // bump when any js/py/*.py changes
+    var PY_LIB_VERSION = 29;     // bump when any js/py/*.py changes
 
     var py = null;              // the Pyodide API object
     var prelude = null;         // the imported prelude module
@@ -34,6 +34,7 @@ var PyodideRuntime = (function () {
     var onOutput = function () {};
     var onError = function () {};
     var onInput = function () { return Promise.resolve(""); };
+    var onStep = function () { return Promise.resolve("step"); };
 
     // A promise that stop() can reject. Every blocking call goes through this,
     // so pressing Stop surfaces as an exception at the Python call site rather
@@ -175,14 +176,6 @@ var PyodideRuntime = (function () {
         "cantonese": "zh-HK", "taiwan chinese": "zh-TW", "taiwanese": "zh-TW"
     };
 
-    function notYet(name) {
-        return function () {
-            return Promise.reject(new Error(
-                name + "() is not available on the Pyodide runtime yet. " +
-                "Add &runtime=skulpt to the URL to use it."));
-        };
-    }
-
     // The object Python sees as `import _host`.
     var hostBridge = {
         readLine: function (prompt) { return cancellable(Promise.resolve(onInput(prompt))); },
@@ -192,6 +185,16 @@ var PyodideRuntime = (function () {
         clearConsole: function () { if (typeof clearConsole === "function") { clearConsole(); } },
         isStopped: function () { return stopped; },
         webServiceURL: function () { return webServiceURL; },
+        // One pause of the step debugger or a breakpoint (js/py/stepper.py).
+        // Resolves with "step" or "continue" from the editor's buttons; Stop
+        // rejects it, like any other blocking call.
+        debugPause: function (lineno, locals, reason) {
+            return cancellable(Promise.resolve(onStep({
+                lineno: lineno,
+                locals: locals === undefined ? null : locals,
+                reason: reason
+            })).then(function (command) { return command || "step"; }));
+        },
         // Resolves on the next animation frame. goto-driven frame loops use
         // this to pace themselves; a setTimeout(0) would spin as fast as the
         // event loop allows and make those sketches unwatchable.
@@ -353,21 +356,358 @@ var PyodideRuntime = (function () {
             return service("cloudvars/del", { name: name, school: school }, 10000);
         },
 
-        // --- webcam / Teachable Machine ----------------------------------------
-        // These drive tf.js models and a live camera; not ported yet.
-        showWebCam: notYet("showWebCam"),
-        printWebCam: notYet("printWebCam"),
-        getWebCamImage: notYet("getWebCamImage"),
-        pauseWebCam: notYet("pauseWebCam"),
-        resumeWebCam: notYet("resumeWebCam"),
-        loadPoseModel: notYet("loadPoseModel"),
-        predictPoseFromWebCam: notYet("predictPoseFromWebCam"),
-        loadAudioModel: notYet("loadAudioModel"),
-        predictFromAudio: notYet("predictFromAudio"),
-        loadImageModel: notYet("loadImageModel"),
-        predictFromImage: notYet("predictFromImage"),
-        predictFromWebCam: notYet("predictFromWebCam")
+        // --- console.js classroom functions (js/py/consolehost.py) -------------
+        // console.js's own versions unwrap Skulpt values, so the Pyodide
+        // builtins come here instead - reusing console.js's DOM helpers and
+        // globals, so there is one implementation of each and stopAllHue()
+        // still stops a Hue timeline.
+        setConsoleFontSize: function (size) { fontSize = size + "pt"; },
+        showIFrame: function (url, w, h, x, y) {
+            return cancellable(new Promise(function (resolve, reject) {
+                showSpinner();
+                var frame = createIFrameElement(url, nul(w), nul(h), nul(x), nul(y));
+                frame.onload = function () {
+                    frame.style.display = "block";
+                    hideSpinner();
+                    resolve(true);
+                };
+                frame.onerror = function () {
+                    hideSpinner();
+                    reject(new Error("There was an error loading: " + url));
+                };
+                pyConsole.appendChild(frame);
+            }));
+        },
+        setWebCamCallback: function (f) { webCamCallback = f || null; },
+
+        hueSetBridge: function (IP, user, bridgeUser, useHttps) {
+            return cancellable(new Promise(function (resolve, reject) {
+                g_hueUserName = bridgeUser;
+                var school = "school_huebridge";
+                showSpinner();
+                fetch(webServiceURL + "cloudvars/get?name=" + school + "_cloud_" + user + "&school=" + school)
+                    .then(function (r) { return r.json(); })
+                    .then(function (data) {
+                        if (data.status === 418 || data.value === "False") {
+                            throw new Error("User not enabled:" + user);
+                        }
+                        if (data.status !== 200) {
+                            throw new Error("Error with school code for setting the Hue Bridge IP");
+                        }
+                        g_hueBridgeIP = IP;
+                        g_useHTTPS = useHttps;
+                        var ctrl = new AbortController();
+                        var timer = setTimeout(function () { ctrl.abort(); }, 5000);
+                        return fetch(getHueBridgeURL() + "/api/" + g_hueUserName + "/lights",
+                                     { method: "GET", signal: ctrl.signal })
+                            .then(function (r) { return r.json(); }, function (err) {
+                                throw new Error(err && err.name === "AbortError"
+                                    ? "Timed out when trying to connect to IP: " + IP +
+                                      " - please check that you have the correct ID address."
+                                    : "Error with accessing the hue bridge. Please check that you can access https://" +
+                                      IP + " - " + err);
+                            })
+                            .then(function (lights) {
+                                if (lights && lights.length > 0 && "error" in lights[0]) {
+                                    throw new Error("Error with accessing the hue bridge:" + lights[0].error.description);
+                                }
+                                return lights;
+                            })
+                            .finally(function () { clearTimeout(timer); });
+                    })
+                    .then(resolve, reject)
+                    .finally(hideSpinner);
+            }));
+        },
+        hueSetLight: function (light, on, bright, x, y) {
+            var state = {};
+            if (on !== undefined && on !== null) { state.on = !!on; }
+            if (bright !== undefined && bright !== -1) { state.bri = Math.min(bright, 254); }
+            if (x !== undefined && y !== undefined && x !== -1 && y !== -1) {
+                state.xy = [x, y];
+                state.colormode = "xy";
+            }
+            hueRequest("/lights/" + light + "/state", "PUT", state);
+        },
+        hueLight: function (light, on) { hueRequest("/lights/" + light + "/state", "PUT", { on: !!on }); },
+        hueBright: function (light, bri) { hueRequest("/lights/" + light + "/state", "PUT", { bri: bri }); },
+        hueColour: function (light, x, y) {
+            hueRequest("/lights/" + light + "/state", "PUT", { xy: [x, y], colormode: "xy" });
+        },
+        hueGetLight: function (light) {
+            return cancellable(hueFetch("/lights/" + light));
+        },
+        hueGetButton: function (button) {
+            return cancellable(hueFetch("/sensors/" + button).then(function (d) { return d.state.buttonevent; }));
+        },
+        hueWaitForButton: function (button) {
+            var timer = null;
+            var wait = new Promise(function (resolve, reject) {
+                timer = setInterval(function () {
+                    hueFetch("/sensors/" + button).then(function (d) {
+                        var event = d.state.buttonevent;
+                        // 1002 and 1003 are releases; anything else is a press
+                        if (event !== null && event !== 1002 && event !== 1003) {
+                            clearInterval(timer);
+                            resolve(event);
+                        }
+                    }, function (err) {
+                        clearInterval(timer);
+                        reject(new Error("getButton Request failed: " + err));
+                    });
+                }, 800);
+            });
+            // Stop rejects the wait; the poll must end with it.
+            return cancellable(wait).catch(function (e) { clearInterval(timer); throw e; });
+        },
+        hueQueue: function (time, light, on, bright, cx, cy) {
+            var at = time * 1000;
+            var path = "/lights/" + light + "/state";
+            if (on !== -1) {
+                hueCommands.push({ time: at, execute: function () { hueRequest(path, "PUT", { on: !!on }); } });
+            }
+            if (bright !== -1) {
+                hueCommands.push({ time: at, execute: function () { hueRequest(path, "PUT", { bri: bright }); } });
+            }
+            if (cx !== -1 && cy !== -1) {
+                hueCommands.push({ time: at, execute: function () {
+                    hueRequest(path, "PUT", { xy: [cx, cy], colormode: "xy" });
+                } });
+            }
+        },
+        hueExecute: function (loopTimes) {
+            var loops = loopTimes;
+            var index = 0;
+            hueTimer = 0;
+            hueCommands.sort(function (a, b) { return a.time - b.time; });
+            if (hueInterval !== null) { clearInterval(hueInterval); }
+            hueInterval = setInterval(function () {
+                hueTimer += hueCommandInterval;
+                while (index < hueCommands.length && hueCommands[index].time <= hueTimer) {
+                    hueCommands[index++].execute();
+                }
+                if (index === hueCommands.length) {
+                    // 0 or less loops for ever; a positive count counts down
+                    if (loops <= 0 || --loops > 0) {
+                        index = 0;
+                        hueTimer = 0;
+                    } else {
+                        clearInterval(hueInterval);
+                        hueInterval = null;
+                    }
+                }
+            }, hueCommandInterval);
+        },
+
+        // --- webcam / Teachable Machine (csinsc.py) ------------------------------
+        // Each resolves to the {status, response} pair the fork kept in module
+        // variables (webcamStatus / webcamResponse and friends): status 0 with
+        // the result, or 1 with the message csinsc.py raises. A rejection is the
+        // fork's other failure path, which csinsc.py reports with its own
+        // "Error attempting to ..." message.
+        showWebCam: function () {
+            return cancellable(Promise.resolve().then(createWebCam).then(
+                function () { return tmResult(""); },
+                function () { return tmFailure("Error with opening the webcam"); }));
+        },
+        printWebCam: function () {
+            return cancellable(Promise.resolve().then(printWebCam).then(function () { return tmResult(""); }));
+        },
+        webCamImage: function () { return getImageFromWebCam(); },
+        pauseWebCam: function () {
+            pauseWebCam();
+            return cancellable(Promise.resolve(tmResult("")));
+        },
+        resumeWebCam: function () {
+            resumeWebCam();
+            return cancellable(Promise.resolve(tmResult("")));
+        },
+
+        loadImageModel: function (url) {
+            var loading = (url === undefined || url === null)
+                ? imageModelFromDialog()
+                : tmImage.load(modelBase(url) + "model.json", modelBase(url) + "metadata.json");
+            return cancellable(loading.then(function (model) {
+                tmImageModel = model;
+                return tmResult("");
+            }));
+        },
+        predictFromImage: function (url, topK) {
+            return cancellable((async function () {
+                try {
+                    if (topK === -1) { topK = tmImageModel.getTotalClasses(); }
+                    var img = new Image();
+                    if (url) {
+                        await new Promise(function (resolve, reject) {
+                            img.onload = resolve;
+                            img.onerror = reject;
+                            // Before src. The fork set it after, which leaves a
+                            // cross-origin image tainted and unreadable.
+                            img.crossOrigin = "anonymous";
+                            img.src = url;
+                        });
+                    }
+                    return tmResult(predictionPairs(await tmImageModel.predictTopK(img, topK), topK));
+                } catch (e) {
+                    return tmFailure("Error with predicting from image.");
+                }
+            })());
+        },
+        predictFromWebCam: function (topK) {
+            return cancellable((async function () {
+                var canvas = getWebCamCanvas();
+                if (canvas === null) { return tmFailure("WebCam not set up."); }
+                try {
+                    if (topK === -1) { topK = tmImageModel.getTotalClasses(); }
+                    return tmResult(predictionPairs(await tmImageModel.predictTopK(canvas, topK), topK));
+                } catch (e) {
+                    return tmFailure("Error with predicting from webcam.");
+                }
+            })());
+        },
+
+        loadPoseModel: function (url) {
+            // The fork opened the image-model upload dialog here and then waited
+            // on a flag that dialog never cleared, so it hung for ever.
+            if (url === undefined || url === null) {
+                return cancellable(Promise.resolve(tmFailure("loadPoseModel() needs the URL of your pose model.")));
+            }
+            return cancellable(tmPose.load(modelBase(url) + "model.json", modelBase(url) + "metadata.json")
+                .then(function (model) {
+                    tmPoseModel = model;
+                    // csinsc.py drew the skeleton over the webcam every frame
+                    webCamCallback = drawPoseSkeleton;
+                    return tmResult("");
+                }));
+        },
+        predictPoseFromWebCam: function (topK) {
+            return cancellable((async function () {
+                var canvas = getWebCamCanvas();
+                if (canvas === null) { return tmFailure("WebCam not set up."); }
+                try {
+                    if (topK === -1) { topK = tmPoseModel.getTotalClasses(); }
+                    var estimate = await tmPoseModel.estimatePose(canvas);
+                    tmPoseData = estimate.pose;
+                    var response = predictionPairs(await tmPoseModel.predict(estimate.posenetOutput), topK);
+                    // the last entry is the skeleton, as in the fork
+                    response.push(tmPoseData ? [tmPoseData.keypoints] : []);
+                    return tmResult(response);
+                } catch (e) {
+                    return tmFailure("Error with predicting pose from webcam.");
+                }
+            })());
+        },
+
+        loadAudioModel: function (url) {
+            if (url === undefined || url === null) {
+                return cancellable(Promise.resolve(tmFailure("loadAudioModel() needs the URL of your audio model.")));
+            }
+            tmAudioModel = speechCommands.create("BROWSER_FFT", undefined,
+                modelBase(url) + "model.json", modelBase(url) + "metadata.json");
+            return cancellable(tmAudioModel.ensureModelLoaded().then(function () { return tmResult(""); }));
+        },
+        predictFromAudio: function () {
+            return cancellable(new Promise(function (resolve) {
+                try {
+                    var labels = tmAudioModel.wordLabels();
+                    Promise.resolve(tmAudioModel.listen(function (result) {
+                        var response = [];
+                        var best = 0;
+                        for (var i = 0; i < labels.length; i++) {
+                            if (result.scores[i] > result.scores[best]) { best = i; }
+                            response.push([labels[i], Number(result.scores[i].toFixed(2))]);
+                        }
+                        // Keep listening through background noise, as the fork did.
+                        var label = labels[best].toLowerCase();
+                        if (label.indexOf("background") > -1 || label.indexOf("noise") > -1) { return; }
+                        tmAudioModel.stopListening();
+                        resolve(tmResult(response));
+                    }, {
+                        includeSpectrogram: true,
+                        probabilityThreshold: 0.5,
+                        invokeCallbackOnNoiseAndUnknown: false,
+                        overlapFactor: 0.5
+                    })).catch(function () { resolve(tmFailure("Error with audio prediction.")); });
+                } catch (e) {
+                    resolve(tmFailure("Error with audio prediction."));
+                }
+            }));
+        }
     };
+
+    // --- Philips Hue helpers (console.js keeps the bridge address and user) ---
+    // A light command does not make the program wait - the fork's reason: several
+    // lights should change together, not one after another.
+    function hueRequest(path, method, body) {
+        return fetch(getHueBridgeURL() + "/api/" + g_hueUserName + path, {
+            method: method,
+            body: body === undefined ? undefined : JSON.stringify(body)
+        }).then(function (r) { return r.json(); })
+          .catch(function (err) { console.error("Hue request failed:", err); });
+    }
+
+    function hueFetch(path) {
+        return fetch(getHueBridgeURL() + "/api/" + g_hueUserName + path, { method: "GET" })
+            .then(function (r) { return r.json(); });
+    }
+
+    // --- Teachable Machine state (the fork kept it on csinscTools) -------------
+    var tmImageModel = null;
+    var tmPoseModel = null;
+    var tmPoseData = null;
+    var tmAudioModel = null;
+
+    function tmResult(response) { return { status: 0, response: response }; }
+    function tmFailure(message) { return { status: 1, response: message }; }
+
+    function modelBase(url) {
+        url = String(url);
+        return url.slice(-1) === "/" ? url : url + "/";
+    }
+
+    // [[className, probability], ...] for the first topK predictions, the
+    // probability rounded to two places as the fork did.
+    function predictionPairs(prediction, topK) {
+        var pairs = [];
+        for (var i = 0; i < topK && i < prediction.length; i++) {
+            pairs.push([prediction[i].className, Number(prediction[i].probability.toFixed(2))]);
+        }
+        return pairs;
+    }
+
+    // loadImageModel() with no URL: the upload dialog in editor.html, taking the
+    // three files Teachable Machine exports.
+    function imageModelFromDialog() {
+        return new Promise(function (resolve, reject) {
+            var ok = document.getElementById("tmImageDialogOKBtn");
+            function pressed() {
+                ok.removeEventListener("click", pressed);
+                tmImage.loadFromFiles(document.getElementById("upload-model").files[0],
+                                      document.getElementById("upload-weights").files[0],
+                                      document.getElementById("upload-metadata").files[0])
+                    .then(resolve, reject);
+            }
+            ok.addEventListener("click", pressed);
+            document.getElementById("tmImageDialog").style.display = "block";
+        });
+    }
+
+    function drawPoseSkeleton() {
+        var canvas = getWebCamCanvas();
+        if (!canvas || !tmPoseData) { return; }
+        var ctx = canvas.getContext("2d");
+        tmPose.drawKeypoints(tmPoseData.keypoints, 0.5, ctx);
+        tmPose.drawSkeleton(tmPoseData.keypoints, 0.5, ctx);
+    }
+
+    // The fork's grammar has a real `forever:` statement and CPython does not.
+    // It is `while True:` in every way that matters - loop yielding and Stop
+    // included - so it is rewritten in place. On the same line: the step
+    // debugger and error messages both point at line numbers. No curriculum
+    // file uses it; teachers' code might.
+    function rewriteForever(code) {
+        return code.replace(/^([ \t]*)forever([ \t]*):/gm, "$1while True$2:");
+    }
 
     var _clickedButtons = [];
     var _awaitButton = null;
@@ -435,7 +775,8 @@ var PyodideRuntime = (function () {
                 var MANIFEST = ["prelude.py", "gotolabel.py", "yielding.py", "csinsc.py",
                                 "goodies.py", "pyangelo.py", "turtle.py", "microbit.py",
                                 "speech.py", "babylon.py", "perlin.py", "sendsms.py",
-                                "pyangelo_builtins.py", "vector.py", "sprite.py"];
+                                "pyangelo_builtins.py", "vector.py", "sprite.py", "stepper.py",
+                                "consolehost.py"];
                 py.FS.mkdirTree(PY_LIB);
                 var sources = await Promise.all(MANIFEST.map(function (f) {
                     return fetchText("js/py/" + f + "?t=" + PY_LIB_VERSION);
@@ -453,6 +794,9 @@ var PyodideRuntime = (function () {
                 py.pyimport("pyangelo_builtins").install_functions();
 
                 self.flushHostNames();
+                // console.js's classroom functions that only work on Skulpt
+                // values, rebound in Python - after the Host names, so these win.
+                py.pyimport("consolehost").install();
                 return py;
             })();
             return booting;
@@ -464,7 +808,7 @@ var PyodideRuntime = (function () {
         // access - so both spellings converge on that and js/py/gotolabel.py
         // gives it meaning.
         normaliseGotoLabels: function (code) {
-            return attributiseGotoLabels(code);
+            return rewriteForever(attributiseGotoLabels(code));
         },
 
         // Queued rather than applied: console.js declares these at parse time,
@@ -508,6 +852,9 @@ var PyodideRuntime = (function () {
             // interpreter that is no longer listening.
             try { MicrobitHost.stopAll(); } catch (e) {}
             try { PyAngeloBuiltinHost.stop(); } catch (e) {}
+            // predictFromAudio() leaves the microphone listening if Stop lands
+            // before a sound is recognised.
+            try { if (tmAudioModel && tmAudioModel.isListening()) { tmAudioModel.stopListening(); } } catch (e) {}
             // A re-run must re-import these so their module-level start()
             // runs again; otherwise the second run draws into a canvas with
             // no render loop, or into a turtle layer that no longer exists.
@@ -534,12 +881,14 @@ var PyodideRuntime = (function () {
             onOutput = opts.onOutput || function () {};
             onError = function (text) { (opts.onError || function () {})(text); };
             onInput = opts.onInput || function () { return Promise.resolve(""); };
+            onStep = opts.onStep || function () { return Promise.resolve("step"); };
+            var breakpoints = (opts.breakpoints || []).slice();
 
             var self = this;
             return this.boot().then(function () {
                 var runner = prelude.run_user_code;
                 // callPromising is what arms JSPI. Without it run_sync raises.
-                return runner.callPromising(opts.code);
+                return runner.callPromising(opts.code, !!opts.stepMode, !!opts.autoStep, breakpoints);
             }).catch(function (err) {
                 // A stop is a normal ending, not a crash to report twice.
                 if (stopped) { throw "Stopped!"; }

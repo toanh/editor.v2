@@ -43,6 +43,28 @@ body {
 .ace-eclipse .ace_marker-layer .step-line {
 	background: #b6e7b6;
 }
+/* Breakpoints: a red dot in Monaco's glyph margin, click to toggle. The hint is
+   the faint dot shown where the mouse would add one. */
+.monaco-editor .breakpoint-glyph,
+.monaco-editor .breakpoint-hint {
+	border-radius: 50%;
+	width: 12px !important;
+	height: 12px !important;
+	margin-left: 5px;
+	margin-top: 5px;
+	cursor: pointer;
+}
+.monaco-editor .breakpoint-glyph {
+	background: #e51400;
+}
+.monaco-editor .breakpoint-hint {
+	background: rgba(229, 20, 0, 0.35);
+}
+/* Ace (?editor=ace): Ace's own gutter breakpoint class. */
+.ace_gutter-cell.ace_breakpoint {
+	border-radius: 0;
+	box-shadow: inset 5px 0 0 #e51400;
+}
 /* TODO: size this to the longest completion instead of a fixed width:
    https://stackoverflow.com/questions/47708044/changing-the-width-of-autocompleter */
 .ace_editor.ace_autocomplete {

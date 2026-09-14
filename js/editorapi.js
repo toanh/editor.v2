@@ -55,6 +55,25 @@ var Editor = (function () {
             return required().clearStepLine();
         },
 
+        // Breakpoints: clicking the gutter toggles a red dot on a line, and a
+        // run pauses there. Off until enabled, so an embed that hides the step
+        // debugger (?nostep, ?headless) offers nothing it cannot use.
+        setBreakpointsEnabled: function (enabled) {
+            var b = required();
+            if (b.setBreakpointsEnabled) { b.setBreakpointsEnabled(!!enabled); }
+        },
+
+        // 1-based line numbers, ascending.
+        getBreakpoints: function () {
+            var b = required();
+            return b.getBreakpoints ? b.getBreakpoints() : [];
+        },
+
+        setBreakpoints: function (lines) {
+            var b = required();
+            if (b.setBreakpoints) { b.setBreakpoints(lines || []); }
+        },
+
         setReadOnly: function (readOnly) {
             return required().setReadOnly(readOnly);
         },

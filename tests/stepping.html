@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>RUNNING</title>
+<style>
+  #f { border: 0; width: 1000px; height: 700px; }
+  body { margin: 0; font: 12px monospace; }
+</style>
+</head>
+<body>
+<!--
+  Drives the step debugger and breakpoints through the real editor: the same
+  runSkulpt() the Step and Run buttons call, the real Next and Continue buttons,
+  the real watch table. Records every pause - the line the editor highlighted and
+  what the watch table was given - so two runtimes can be compared pause by pause.
+
+    ?codeurl=tests/stepping/basics.py   the program
+    &runtime=pyodide                    or skulpt
+    &mode=step                          step (the Step button) or run (Run)
+    &breakpoints=8,12                   gutter breakpoints to set first
+    &script=next,next,continue          the button to press at each pause; the
+                                        last entry repeats. Default: next when
+                                        stepping, continue when running
+    &with=editor%3Dace                  an extra editor.html parameter
+
+  Reports {pauses: [[line, "name=value;..."], ...], text, error} in #out, and
+  sets the title to DONE. tests/check-stepping.sh runs the scenarios.
+-->
+<iframe id="f"></iframe>
+<pre id="out">running</pre>
+<script>
+(function () {
+  var q = new URLSearchParams(location.search);
+  var runtime = q.get("runtime") || "skulpt";
+  var mode = q.get("mode") || "step";
+  var breakpoints = (q.get("breakpoints") || "").split(",").filter(Boolean).map(Number);
+  var script = (q.get("script") || (mode === "step" ? "next" : "continue")).split(",");
+  var extra = q.get("with") ? "&" + q.get("with") : "";
+  var out = document.getElementById("out");
+  var frame = document.getElementById("f");
+
+  var done = false;
+  var pauses = [];
+  var pendingLocals = null;
+  var clicks = 0;
+  var win = null;
+
+  function consoleText() {
+    try {
+      var c = win && win.document.getElementById("console");
+      return c ? c.textContent.replace(/\s+$/, "") : "";
+    } catch (e) { return ""; }
+  }
+
+  function report(o) {
+    if (done) { return; }
+    done = true;
+    o.pauses = pauses;
+    o.text = consoleText();
+    o.runtime = runtime;
+    out.textContent = JSON.stringify(o);
+    document.title = "DONE";
+  }
+  setTimeout(function () { report({ error: "timed out" }); }, 100000);
+
+  try { localStorage.removeItem("__stepping__"); } catch (e) {}
+  fetch("../" + q.get("codeurl")).then(function (r) { return r.text(); }).then(function (src) {
+    frame.src = "../editor.html?code=" + encodeURIComponent(src) +
+      "&name=__stepping__&nosave=1&nosnap=1&nofs=1&runtime=" + runtime + extra;
+  });
+
+  frame.onload = function () {
+    var t0 = Date.now();
+    (function poll() {
+      if (done) { return; }
+      var w = frame.contentWindow, ready = false;
+      try { ready = w && typeof w.runSkulpt === "function" && w.codestring; } catch (e) {}
+      if (!ready) {
+        if (Date.now() - t0 > 60000) { return report({ error: "never loaded" }); }
+        return setTimeout(poll, 60);
+      }
+      go(w);
+    })();
+  };
+
+  function go(w) {
+    win = w;
+    if (breakpoints.length) { w.Editor.setBreakpoints(breakpoints); }
+
+    // Observe what the UI was asked to show. Both are called from onStepLine,
+    // populateTraceTable first, so the locals belong to the line that follows.
+    var realPopulate = w.populateTraceTable;
+    w.populateTraceTable = function (traces) {
+      pendingLocals = traces;
+      return realPopulate.apply(this, arguments);
+    };
+    var realSetStepLine = w.Editor.setStepLine;
+    w.Editor.setStepLine = function (lineno) {
+      var locals = pendingLocals == null ? null :
+        Array.prototype.map.call(pendingLocals, function (p) { return p[0] + "=" + p[1]; }).join(";");
+      pauses.push([lineno, locals]);
+      pendingLocals = null;
+      return realSetStepLine.apply(this, arguments);
+    };
+
+    var realStop = w.stopSkulpt;
+    w.stopSkulpt = function () {
+      var r = realStop.apply(this, arguments);
+      setTimeout(function () { report({}); }, 50);
+      return r;
+    };
+
+    // Press a button for each pause, once the UI is waiting for one.
+    (function press() {
+      if (done) { return; }
+      if (pauses.length > clicks) {
+        var command = script[Math.min(clicks, script.length - 1)];
+        var button = w.document.getElementById(command === "continue" ? "continueButton" : "nextButton");
+        if (button && button.style.display !== "none") {
+          clicks++;
+          if (pauses.length > 300) {
+            w.document.getElementById("stopButton").click();
+          } else {
+            button.click();
+          }
+        }
+      }
+      setTimeout(press, 20);
+    })();
+
+    w.runSkulpt(mode === "step");
+  }
+})();
+</script>
+</body>
+</html>

@@ -685,70 +685,109 @@ def clouddel(variable):
 
 
 # ------------------------------------------------- webcam / Teachable Machine
+#
+# The fork started each of these in csinscTools.js, busy-waited on a
+# ...Waiting flag, then read ...Status and ...Response. The host resolves that
+# same pair once (runtime-pyodide.js), so both kinds of failure message are the
+# fork's, word for word: "Error attempting to ..." for a call that failed
+# outright, and the status message - "WebCam not set up." and the like -
+# otherwise.
 
-def _webcam_unavailable(name):
-    raise NotImplementedError(
-        name + "() is not available on the Pyodide runtime yet. "
-        "Add ?runtime=skulpt to the URL to use it.")
+def _teachable(promise, failure):
+    _host.showSpinner()
+    try:
+        result = _py(block(promise))
+    except KeyboardInterrupt:
+        raise
+    except Exception:
+        raise Exception(failure)
+    finally:
+        _host.hideSpinner()
+    if result["status"] != 0:
+        raise Exception(str(result["response"]))
+    return result["response"]
 
 
 def showWebCam():
-    return block(_host.showWebCam())
+    _teachable(_host.showWebCam(), "Error attempting to show webcam")
 
 
 def printWebCam():
-    return block(_host.printWebCam())
+    _teachable(_host.printWebCam(), "Error attempting to show webcam")
 
 
 def getWebCamImage():
-    return _host.getWebCamImage()
+    """The current webcam frame as a data URL.
+
+    Without a webcam the fork returned the string "None" - str() of JavaScript's
+    null - and that is kept, as a program may compare with it.
+    """
+    try:
+        data = _host.webCamImage()
+    except Exception:
+        raise Exception("Error attempting to retrieve image from the webcam")
+    if data is None or type(data).__name__ == "JsNull":
+        return "None"
+    return str(data)
 
 
 def pauseWebCam():
-    return block(_host.pauseWebCam())
+    _teachable(_host.pauseWebCam(), "Error attempting to show webcam")
 
 
 def resumeWebCam():
-    return block(_host.resumeWebCam())
+    _teachable(_host.resumeWebCam(), "Error attempting to show webcam")
 
 
 def loadPoseModel(url=None):
-    return block(_host.loadPoseModel(url))
+    # "audio model" is in the fork's message too, where this function was
+    # copied from loadAudioModel. Kept word for word, like every other message.
+    _teachable(_host.loadPoseModel(url), "Error attempting to load the audio model")
 
 
 def predictPoseFromWebCam(showAll=False, topK=-1):
-    result = _py(block(_host.predictPoseFromWebCam(topK)))
+    response = _teachable(_host.predictPoseFromWebCam(topK),
+                          "Error attempting to predict pose from webcam stream")
     if showAll:
-        return result
-    best = None
-    for entry in result[:-1]:
-        if best is None or entry[1] > best[1]:
-            best = entry
-    return best[0] if best else None
+        return response
+    # The last entry is the skeleton, not a class. The fork's loop included it,
+    # so asking for the best class raised IndexError every time.
+    maxProb = 0
+    maxClass = ""
+    for r in response[:-1]:
+        if r[1] > maxProb:
+            maxClass = r[0]
+            maxProb = r[1]
+    return maxClass
 
 
 def getSkeletonFromWebCam():
-    result = _py(block(_host.predictPoseFromWebCam(-1)))
-    return result[-1]
+    response = _teachable(_host.predictPoseFromWebCam(-1),
+                          "Error attempting to predict pose from webcam stream")
+    return response[-1]
 
 
 def loadAudioModel(url=None):
-    return block(_host.loadAudioModel(url))
+    _teachable(_host.loadAudioModel(url), "Error attempting to load the audio model")
 
 
 def predictFromAudio(showAll=False):
-    return _py(block(_host.predictFromAudio()))
+    # showAll is accepted and ignored: the fork commented out everything except
+    # returning the whole response.
+    return _teachable(_host.predictFromAudio(), "Error attempting to predict from audio stream")
 
 
 def loadImageModel(url=None):
-    return block(_host.loadImageModel(url))
+    _teachable(_host.loadImageModel(url), "Error attempting to load the Image model")
 
 
 def predictFromImage(param, topK=1):
-    result = _py(block(_host.predictFromImage(param, topK)))
-    return result[0] if topK == 1 else result
+    response = _teachable(_host.predictFromImage(param, topK),
+                          "Error attempting to predict from an image URL using the Image model")
+    return response[0] if topK == 1 else response
 
 
 def predictFromWebCam(topK=1):
-    result = _py(block(_host.predictFromWebCam(topK)))
-    return result[0] if topK == 1 else result
+    response = _teachable(_host.predictFromWebCam(topK),
+                          "Error attempting to predict from webcam using the Image model")
+    return response[0] if topK == 1 else response

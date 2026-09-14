@@ -30,6 +30,7 @@ import sys
 import time
 import warnings
 
+import stepper
 from prelude import maybe_yield
 
 USER_FILENAME = "<stdin>.py"
@@ -137,10 +138,17 @@ class _Label:
     locking the tab. The yield lives here, in ordinary Python, rather than in
     the trace function, where calling run_sync would be on much less certain
     ground.
+
+    It also tells the step debugger the label was reached: a goto lands on this
+    line without CPython reporting it (see stepper.py), so without this a
+    student stepping through a goto loop would never see the label highlighted,
+    and a breakpoint on a label would only fire the first time.
     """
     __slots__ = ()
 
     def __getattr__(self, name):
+        if stepper.active():
+            stepper.label_reached(sys._getframe(1))
         maybe_yield()
         return None
 
@@ -154,6 +162,10 @@ def _tracer_for(table):
         if event == "line":
             target = table.get(frame.f_lineno)
             if target is not None:
+                # The step debugger cannot see this jump arrive (see
+                # stepper.py), so it is told where execution is going.
+                if stepper.active():
+                    stepper.goto_jumped(target)
                 frame.f_lineno = target
         return tracer
     return tracer

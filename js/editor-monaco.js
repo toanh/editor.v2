@@ -18,8 +18,40 @@ var MonacoEditorBackend = (function () {
     var ed = null;
     var model = null;
     var stepDecorations = null;
+    var breakpointDecorations = null;
+    var hintDecorations = null;
+    var breakpointsEnabled = false;
     var completionFn = null;
     var loading = null;
+
+    // Breakpoints are decorations rather than a list of numbers, so Monaco
+    // moves them with the text: add a line above one and it follows its line.
+    function breakpointLines() {
+        if (!breakpointDecorations) { return []; }
+        var seen = {};
+        breakpointDecorations.getRanges().forEach(function (r) { seen[r.startLineNumber] = true; });
+        return Object.keys(seen).map(Number).sort(function (a, b) { return a - b; });
+    }
+
+    function setBreakpointLines(lines) {
+        breakpointDecorations.set(lines.map(function (n) {
+            return {
+                range: new monaco.Range(n, 1, n, 1),
+                options: {
+                    glyphMarginClassName: "breakpoint-glyph",
+                    glyphMarginHoverMessage: { value: "Breakpoint - click to remove" },
+                    stickiness: monaco.editor.TrackedRangeStickiness.NeverGrowsWhenTypingAtEdges
+                }
+            };
+        }));
+    }
+
+    function toggleBreakpoint(line) {
+        var lines = breakpointLines();
+        var i = lines.indexOf(line);
+        if (i >= 0) { lines.splice(i, 1); } else { lines.push(line); }
+        setBreakpointLines(lines);
+    }
 
     var THEME_DARK = "csis-monokai";
     var THEME_LIGHT = "vs";
@@ -113,6 +145,9 @@ var MonacoEditorBackend = (function () {
                     scrollBeyondLastLine: true,
                     renderLineHighlight: "all",
                     minimap: { enabled: false },
+                    // The glyph margin holds breakpoints; it appears when
+                    // setBreakpointsEnabled(true) is called.
+                    glyphMargin: false,
                     readOnly: !!opts.readOnly
                 });
 
@@ -121,6 +156,29 @@ var MonacoEditorBackend = (function () {
                 // conformance goldens both assume \n.
                 model.setEOL(monaco.editor.EndOfLineSequence.LF);
                 stepDecorations = ed.createDecorationsCollection();
+                breakpointDecorations = ed.createDecorationsCollection();
+                hintDecorations = ed.createDecorationsCollection();
+
+                // Click the margin to the left of a line number to toggle a
+                // breakpoint; hovering shows a faint dot where one would go.
+                ed.onMouseDown(function (e) {
+                    if (!breakpointsEnabled || !e.target || !e.target.position) { return; }
+                    if (e.target.type === monaco.editor.MouseTargetType.GUTTER_GLYPH_MARGIN) {
+                        toggleBreakpoint(e.target.position.lineNumber);
+                        hintDecorations.clear();
+                    }
+                });
+                ed.onMouseMove(function (e) {
+                    if (!breakpointsEnabled) { return; }
+                    var t = e.target;
+                    var line = t && t.position && t.type === monaco.editor.MouseTargetType.GUTTER_GLYPH_MARGIN
+                        ? t.position.lineNumber : null;
+                    hintDecorations.set(line !== null && breakpointLines().indexOf(line) < 0 ? [{
+                        range: new monaco.Range(line, 1, line, 1),
+                        options: { glyphMarginClassName: "breakpoint-hint" }
+                    }] : []);
+                });
+                ed.onMouseLeave(function () { hintDecorations.clear(); });
                 return ed;
             });
         },
@@ -155,6 +213,23 @@ var MonacoEditorBackend = (function () {
             if (stepDecorations) { stepDecorations.clear(); }
         },
 
+        setBreakpointsEnabled: function (enabled) {
+            breakpointsEnabled = enabled;
+            ed.updateOptions({ glyphMargin: enabled });
+            if (!enabled) {
+                breakpointDecorations.clear();
+                hintDecorations.clear();
+            }
+        },
+
+        getBreakpoints: function () {
+            return breakpointLines();
+        },
+
+        setBreakpoints: function (lines) {
+            setBreakpointLines(lines);
+        },
+
         setReadOnly: function (readOnly) {
             ed.updateOptions({ readOnly: readOnly });
         },
@@ -172,11 +247,14 @@ var MonacoEditorBackend = (function () {
         dispose: function () {
             try {
                 if (stepDecorations) { stepDecorations.clear(); }
+                if (breakpointDecorations) { breakpointDecorations.clear(); }
+                if (hintDecorations) { hintDecorations.clear(); }
                 if (ed) { ed.dispose(); }
                 if (model && !model.isDisposed()) { model.dispose(); }
                 if (workerBlob) { URL.revokeObjectURL(workerBlob); }
             } catch (e) { /* nothing useful to do while tearing down */ }
             ed = null; model = null; stepDecorations = null; workerBlob = null;
+            breakpointDecorations = null; hintDecorations = null;
         },
 
         registerCompletions: function (fn) {

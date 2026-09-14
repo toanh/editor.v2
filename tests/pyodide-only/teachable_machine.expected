@@ -1,0 +1,11 @@
+predict before the webcam: WebCam not set up.
+image model files: ['https://teachablemachine.withgoogle.com/models/abc/model.json', 'https://teachablemachine.withgoogle.com/models/abc/metadata.json']
+predictFromImage: ['clean', 0.91]
+predictFromImage top 2: [['clean', 0.91], ['messy', 0.07]]
+predictFromWebCam: ['clean', 0.91]
+getWebCamImage without a real webcam: 'None'
+predictPoseFromWebCam: arms down
+predictPoseFromWebCam showAll: [['arms up', 0.3], ['arms down', 0.7], [[{'part': 'nose', 'score': 0.9}]]]
+getSkeletonFromWebCam: [[{'part': 'nose', 'score': 0.9}]]
+loadPoseModel without a URL: loadPoseModel() needs the URL of your pose model.
+predictFromAudio: [['Background Noise', 0.2], ['clap', 0.8]]
