@@ -14,7 +14,17 @@
 #
 # Fields: name | program | mode (step|run) | breakpoints | button script |
 #         extra editor param | expected Pyodide pause lines, when they differ |
-#         lines whose watch table is not compared
+#         lines whose watch table is not compared | second program run in the
+#         same page | its breakpoints
+#
+# Every scenario also requires the Step button to be visible before the first
+# run and after the last, under both runtimes.
+#
+# The canvas scenarios exist because of a user-reported bug: a pyangelo program
+# switched the page to canvas mode, which set the ?nostep flag and never cleared
+# it. Breakpoints in the canvas program were ignored, every later run on the
+# page ignored its breakpoints too, and the Step button disappeared. A fresh page
+# per program could never see the second half - hence the second program.
 #
 # The last two fields record ONE accepted difference, and are narrow on
 # purpose - the expected lines are checked exactly, and only the named lines skip
@@ -49,21 +59,25 @@ breakpoint-in-while|while_loop|run|3|continue|||
 breakpoint-in-function|functions|run|2,6|continue|||
 breakpoint-on-label|goto_loop|run|2|continue|||
 ace-breakpoint-in-loop|basics|run|8|continue|editor%3Dace||
+canvas-breakpoint|canvas_loop|run|5|continue|||
+canvas-step|canvas_loop|step||next|||
+canvas-then-plain-breakpoint|canvas_loop|run|5|continue||||basics|8
 "
 
-probe() {  # runtime program mode breakpoints script with
-    local with=""
+probe() {  # runtime program mode breakpoints script with then thenBreakpoints
+    local with="" then=""
     [ -n "$6" ] && with="&with=$6"
+    [ -n "$7" ] && then="&then=tests/stepping/$7.py&thenBreakpoints=$8"
     timeout 150 node tests/cdp-run.js \
-        "http://localhost:$PORT/tests/stepping.html?codeurl=tests/stepping/$2.py&runtime=$1&mode=$3&breakpoints=$4&script=$5$with" \
+        "http://localhost:$PORT/tests/stepping.html?codeurl=tests/stepping/$2.py&runtime=$1&mode=$3&breakpoints=$4&script=$5$with$then" \
         "#out" 120000 2>/dev/null | tail -1
 }
 
 fail=0
-while IFS='|' read -r name program mode breakpoints script with expected notable; do
+while IFS='|' read -r name program mode breakpoints script with expected notable then thenbps; do
     [ -z "$name" ] && continue
-    sk=$(probe skulpt "$program" "$mode" "$breakpoints" "$script" "$with")
-    py=$(probe pyodide "$program" "$mode" "$breakpoints" "$script" "$with")
+    sk=$(probe skulpt "$program" "$mode" "$breakpoints" "$script" "$with" "$then" "$thenbps")
+    py=$(probe pyodide "$program" "$mode" "$breakpoints" "$script" "$with" "$then" "$thenbps")
     line=$(SK="$sk" PY="$py" NAME="$name" EXPECTED="$expected" NOTABLE="$notable" node -e '
 const parse = (s) => { try { return JSON.parse(s || "{}"); } catch (e) { return { error: "unparseable report" }; } };
 const sk = parse(process.env.SK), py = parse(process.env.PY), name = process.env.NAME.padEnd(24);
@@ -74,7 +88,7 @@ if (sk.error || py.error || !sk.pauses || !py.pauses) {
   process.exit(0);
 }
 const lines = (r) => r.pauses.map((p) => p[0]).join(" ");
-const table = (t) => t == null ? "null" : t.split(";").sort().join(";");
+const table = (t) => t == null ? "null" : t.slice().sort().join("  |  ");
 let problem = "";
 
 if (lines(py) !== (expected || lines(sk))) {
@@ -97,6 +111,14 @@ if (!problem) {
   }
   if (!problem && j !== sk.pauses.length) {
     problem = "could not align the pauses (" + j + " of " + sk.pauses.length + " matched)";
+  }
+}
+
+for (const [who, r] of [["skulpt", sk], ["pyodide", py]]) {
+  if (!problem && (r.stepAtLoad !== "inline" || r.stepAtEnd !== "inline")) {
+    problem = "Step button not visible under " + who +
+              " (before first run: " + JSON.stringify(r.stepAtLoad) +
+              ", after last: " + JSON.stringify(r.stepAtEnd) + ")";
   }
 }
 

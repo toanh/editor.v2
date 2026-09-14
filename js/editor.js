@@ -1106,10 +1106,12 @@ function setDisplayMode(mode) {
 		document.getElementById('consoleWrapper').style.height = "200px";
 		//document.getElementById('console').style = "height: 100%";
 
-		// no step-run for canvas items
-		// TODO: implement optional immediate drawing mode to support this
-		nostep = "1";
-		stepButton.style.display = "none";
+		// Stepping and breakpoints work in canvas programs too; drawing
+		// appears when the program calls clearScreen() or refresh(), as it
+		// does when running. This branch used to set the global `nostep` -
+		// which holds the ?nostep URL parameter - and never cleared it, so
+		// after the first canvas program the Step button stayed hidden and
+		// every later run on the page silently ignored its breakpoints.
 	} else if (mode == "babylon")
 	{
 		if (headless) {
@@ -1153,10 +1155,12 @@ function setDisplayMode(mode) {
 		document.getElementById('consoleWrapper').style = "height: 200px";
 		//document.getElementById('console').style = "height: 100%";
 
-		// no step-run for canvas items
-		// TODO: implement optional immediate drawing mode to support this
-		nostep = "1";
-		stepButton.style.display = "none";
+		// Stepping and breakpoints work in canvas programs too; drawing
+		// appears when the program calls clearScreen() or refresh(), as it
+		// does when running. This branch used to set the global `nostep` -
+		// which holds the ?nostep URL parameter - and never cleared it, so
+		// after the first canvas program the Step button stayed hidden and
+		// every later run on the page silently ignored its breakpoints.
 	} else if (mode == "top") {
 	   // editor on top, console at the bottom, splittable
 		document.getElementById('split').style = "display: flex; flex-direction: column";
@@ -1599,8 +1603,14 @@ if (nosave != null && nosave.length > 0) {
 
 // disable step-run button
 nostep = urlParams.get('nostep')
-// always hide step button on load
-stepButton.style.display = "none";
+// The Step button sits beside Run from the start, unless ?nostep. An autorun
+// or headless page starts running straight away, so both stay hidden until
+// stopSkulpt() puts them back when that run ends.
+if ((nostep != null && nostep.length > 0) || autorun || headless) {
+	stepButton.style.display = "none";
+} else {
+	stepButton.style.display = "inline";
+}
 
 
 // disable codestore button

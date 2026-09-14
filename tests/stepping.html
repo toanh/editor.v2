@@ -23,9 +23,19 @@
                                         last entry repeats. Default: next when
                                         stepping, continue when running
     &with=editor%3Dace                  an extra editor.html parameter
+    &then=tests/stepping/basics.py      a second program, run in the SAME page
+    &thenBreakpoints=8                  after the first ends, with these
+                                        breakpoints - a pause line of "--"
+                                        separates the two runs
 
-  Reports {pauses: [[line, "name=value;..."], ...], text, error} in #out, and
-  sets the title to DONE. tests/check-stepping.sh runs the scenarios.
+  Reports {pauses: [[line, "name=value;..."], ...], text, stepAtLoad,
+  stepAtEnd, error} in #out, and sets the title to DONE. stepAtLoad/stepAtEnd
+  are the Step button's display before the first run and after the last.
+  tests/check-stepping.sh runs the scenarios.
+
+  `then` exists because of a bug a fresh page per program could never show: a
+  canvas program set page-wide state that made every later run on the page
+  ignore its breakpoints and hid the Step button.
 -->
 <iframe id="f"></iframe>
 <pre id="out">running</pre>
@@ -37,6 +47,9 @@
   var breakpoints = (q.get("breakpoints") || "").split(",").filter(Boolean).map(Number);
   var script = (q.get("script") || (mode === "step" ? "next" : "continue")).split(",");
   var extra = q.get("with") ? "&" + q.get("with") : "";
+  var then = q.get("then");
+  var thenBreakpoints = (q.get("thenBreakpoints") || "").split(",").filter(Boolean).map(Number);
+  var stepAtLoad = null;
   var out = document.getElementById("out");
   var frame = document.getElementById("f");
 
@@ -59,6 +72,8 @@
     o.pauses = pauses;
     o.text = consoleText();
     o.runtime = runtime;
+    o.stepAtLoad = stepAtLoad;
+    try { o.stepAtEnd = win.document.getElementById("stepButton").style.display; } catch (e) {}
     out.textContent = JSON.stringify(o);
     document.title = "DONE";
   }
@@ -86,6 +101,7 @@
 
   function go(w) {
     win = w;
+    stepAtLoad = w.document.getElementById("stepButton").style.display;
     if (breakpoints.length) { w.Editor.setBreakpoints(breakpoints); }
 
     // Observe what the UI was asked to show. Both are called from onStepLine,
@@ -97,8 +113,10 @@
     };
     var realSetStepLine = w.Editor.setStepLine;
     w.Editor.setStepLine = function (lineno) {
+      // An array, not a joined string: watch-table values can contain any
+      // separator - the console's colour escapes are full of ";".
       var locals = pendingLocals == null ? null :
-        Array.prototype.map.call(pendingLocals, function (p) { return p[0] + "=" + p[1]; }).join(";");
+        Array.prototype.map.call(pendingLocals, function (p) { return p[0] + "=" + p[1]; });
       pauses.push([lineno, locals]);
       pendingLocals = null;
       return realSetStepLine.apply(this, arguments);
@@ -107,7 +125,20 @@
     var realStop = w.stopSkulpt;
     w.stopSkulpt = function () {
       var r = realStop.apply(this, arguments);
-      setTimeout(function () { report({}); }, 50);
+      if (then) {
+        // Second program, same page: exactly what a student does next.
+        var next = then;
+        then = null;
+        fetch("../" + next).then(function (res) { return res.text(); }).then(function (src) {
+          pauses.push(["--", null]);
+          clicks = pauses.length;
+          w.Editor.setValue(src);
+          w.Editor.setBreakpoints(thenBreakpoints);
+          setTimeout(function () { w.runSkulpt(mode === "step"); }, 100);
+        });
+      } else {
+        setTimeout(function () { report({}); }, 50);
+      }
       return r;
     };
 

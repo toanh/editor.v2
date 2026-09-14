@@ -152,13 +152,13 @@ height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
     <!-- Pyodide: the loader is ~19 KB and defines loadPyodide(); the 13 MB of
          wasm and stdlib are only fetched if ?runtime=pyodide actually boots it. -->
     <script src="js/pyodide/pyodide.js" type="text/javascript" charset="utf-8"></script>
-    <script src="js/runtime-pyodide.js?t=17" type="text/javascript" charset="utf-8"></script>
+    <script src="js/runtime-pyodide.js?t=18" type="text/javascript" charset="utf-8"></script>
     <!-- Monaco's AMD loader installs global define()/require(). It goes last,
          after every UMD library above, so none of them register as AMD modules
          instead of setting their globals. -->
     <script src="js/monaco/vs/loader.js" type="text/javascript" charset="utf-8"></script>
     <script src="js/editor-monaco.js?t=2" type="text/javascript" charset="utf-8"></script>
-	<script src="js/editor.js?t=60" type="text/javascript"></script>
+	<script src="js/editor.js?t=61" type="text/javascript"></script>
 	<div class="modal">
 	  <div class="modal-content">
 		<span class="close-btn">&times;</span>

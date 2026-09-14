@@ -539,6 +539,16 @@ What comparing against Skulpt caught, none of it visible from the code:
 - **Skulpt sent no watch-table data after Next at a breakpoint**, leaving the
   table blank - a bug in the new code, in the reference runtime.
 
+And one it missed, found by a user within minutes: **a pyangelo program switched
+the page to canvas mode, which set the `?nostep` flag and never cleared it.** Its
+breakpoints were ignored, every later run on the page ignored its breakpoints
+too, and the Step button disappeared. Every scenario ran in a fresh page, so the
+"every later run" half was invisible. `stepping.html` can now run a second
+program in the same page (`then=`), the canvas scenarios do exactly that, and
+every scenario requires the Step button to be visible before the first run and
+after the last. **Page-level state outlives a run; a test that reloads between
+programs cannot see it.**
+
 Watch tables are compared as sets, because name order within a frame is
 JavaScript property order under Skulpt and means nothing to a student. The one
 accepted difference - CPython pauses on a `for` line before taking the next item,

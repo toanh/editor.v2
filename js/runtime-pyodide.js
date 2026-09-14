@@ -19,7 +19,7 @@
 
 var PyodideRuntime = (function () {
     var PY_LIB = "/pyeditor";   // where js/py/*.py is mounted inside Pyodide
-    var PY_LIB_VERSION = 29;     // bump when any js/py/*.py changes
+    var PY_LIB_VERSION = 30;     // bump when any js/py/*.py changes
 
     var py = null;              // the Pyodide API object
     var prelude = null;         // the imported prelude module

@@ -22,29 +22,43 @@ _size = _canvas.start()
 width = int(_size.width)
 height = int(_size.height)
 
-# The base colours are console.js's pseudo-ANSI escape strings - the same values
-# students get from WHITE, RED and friends - because the host's colour table is
-# keyed by them. The later additions are plain numbers. See pyangelo-host.js.
-BLACK = "[ 38;2;0;0;0 m"
-WHITE = "[ 38;2;255;255;255 m"
-RED = "[ 38;2;255;0;0 m"
-GREEN = "[ 38;2;0;255;0 m"
-YELLOW = "[ 38;2;255;255;0 m"
-BLUE = "[ 38;2;0;0;255 m"
-ORANGE = "[ 38;2;255;165;0 m"
-CYAN = "[ 38;2;0;255;255 m"
+# Colours, placed where the fork places them - in builtins, NOT as attributes of
+# this module. The fork's pyangelo.js does `Sk.builtins.INDIGO = 23` at import,
+# and its base colours are console.js's escape strings, already builtins.
+#
+# Defining them here as module attributes made `from pyangelo import *` copy all
+# nineteen into the student's own variables, so the step debugger's watch table
+# listed BLACK, WHITE, INDIGO and the rest on every pause. Skulpt shows none of
+# them. tests/check-stepping.sh's canvas scenarios caught it.
+#
+# The base colours are re-set on every import, not only left to console.js: a
+# builtin PyAngelo program (setCanvasSize) earlier in the same page replaces
+# RED, BLUE and friends with integers, and the fork never put them back - so a
+# pyangelo program run next drew with the wrong colours until a reload.
+import builtins as _builtins
 
-INDIGO = 23
-DARK_GREY = 24
-DARK_GRAY = 24
-DARK_RED = 25
-DARK_BLUE = 26
-DARK_GREEN = 27
-LIGHT_RED = 28
-LIGHT_BLUE = 29
-LIGHT_GREEN = 30
-LIGHT_GREY = 31
-PINK = 32
+for _name, _value in (
+    ("BLACK", "[ 38;2;0;0;0 m"),
+    ("WHITE", "[ 38;2;255;255;255 m"),
+    ("RED", "[ 38;2;255;0;0 m"),
+    ("GREEN", "[ 38;2;0;255;0 m"),
+    ("YELLOW", "[ 38;2;255;255;0 m"),
+    ("BLUE", "[ 38;2;0;0;255 m"),
+    ("ORANGE", "[ 38;2;255;165;0 m"),
+    ("CYAN", "[ 38;2;0;255;255 m"),
+    ("INDIGO", 23),
+    ("DARK_GREY", 24),
+    ("DARK_GRAY", 24),
+    ("DARK_RED", 25),
+    ("DARK_BLUE", 26),
+    ("DARK_GREEN", 27),
+    ("LIGHT_RED", 28),
+    ("LIGHT_BLUE", 29),
+    ("LIGHT_GREEN", 30),
+    ("LIGHT_GREY", 31),
+    ("PINK", 32),
+):
+    setattr(_builtins, _name, _value)
 
 
 def timeElapsed():
